@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+requests
+scipy
+sqlalchemy
+bcrypt
+pyjwt
+psycopg2-binary
