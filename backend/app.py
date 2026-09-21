@@ -24,16 +24,23 @@ def on_startup():
     Base.metadata.create_all(bind=engine)
 
 
+class SyntheticSpec(BaseModel):
+    ann_return: float = Field(ge=-50, le=100)
+    ann_vol: float = Field(ge=0, le=100)
+
+
 class PortfolioRow(BaseModel):
     ticker: str
     weight: float = Field(gt=0)
     fee: float | None = Field(default=None, ge=0, le=10)
+    synthetic: SyntheticSpec | None = None
 
 
 class SimulateRequest(BaseModel):
     portfolio: list[PortfolioRow]
     years: int = Field(ge=1, le=50)
     window_months: int = Field(ge=1, le=24, default=6)
+    annual_rebalance: bool = False
 
 
 class OptimizeRequest(BaseModel):
@@ -56,6 +63,7 @@ class SavePortfolioRequest(BaseModel):
     portfolio: list[PortfolioRow]
     years: int = Field(ge=1, le=50)
     window_months: int = Field(ge=1, le=24, default=6)
+    annual_rebalance: bool = False
 
 
 @app.get("/api/etfs")
@@ -80,7 +88,10 @@ def api_resolve_ticker(ticker: str):
 def post_simulate(req: SimulateRequest):
     try:
         return run_simulation(
-            [row.model_dump() for row in req.portfolio], req.years, req.window_months
+            [row.model_dump() for row in req.portfolio],
+            req.years,
+            req.window_months,
+            rebalance_mode="annual" if req.annual_rebalance else "monthly",
         )
     except SimulationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -142,6 +153,7 @@ def _serialize_portfolio(row: models.SavedPortfolio) -> dict:
         "portfolio": payload.get("portfolio", []),
         "years": payload.get("years"),
         "window_months": payload.get("window_months"),
+        "annual_rebalance": payload.get("annual_rebalance", False),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
@@ -168,6 +180,7 @@ def create_portfolio(
             "portfolio": [row.model_dump() for row in req.portfolio],
             "years": req.years,
             "window_months": req.window_months,
+            "annual_rebalance": req.annual_rebalance,
         }
     )
     row = models.SavedPortfolio(user_id=user.id, name=req.name, data=data)
@@ -193,6 +206,7 @@ def update_portfolio(
             "portfolio": [r.model_dump() for r in req.portfolio],
             "years": req.years,
             "window_months": req.window_months,
+            "annual_rebalance": req.annual_rebalance,
         }
     )
     db.commit()

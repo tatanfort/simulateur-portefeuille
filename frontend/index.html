@@ -110,6 +110,11 @@
   .weight-field span{ position:absolute; right:9px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:12.5px; pointer-events:none; }
   .row-remove{ width:34px; height:34px; border-radius:8px; border:1px solid var(--border); background:var(--page);
     color:var(--text-muted); font-size:16px; cursor:pointer; line-height:1; }
+  .synthetic-form{ display:flex; gap:8px; margin:2px 0; }
+  .synthetic-form input{ font-family:"IBM Plex Sans",sans-serif; font-size:13px; padding:8px 9px;
+    border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); min-width:0; }
+  .synthetic-form .synth-name{ flex:1.6; }
+  .synthetic-form .synth-return, .synthetic-form .synth-vol{ flex:1; font-family:"IBM Plex Mono",monospace; }
   .ticker-status{ font-size:12px; min-height:15px; line-height:1.4; }
   .ticker-status.checking{ color:var(--text-muted); display:flex; align-items:center; gap:6px; }
   .ticker-status.valid{ color:var(--good-ink); }
@@ -132,6 +137,11 @@
     color:var(--text-muted); margin-bottom:6px; font-family:"IBM Plex Mono",monospace; }
   .num-field input{ width:100px; font-family:"IBM Plex Mono",monospace; font-size:15px; padding:9px 10px;
     border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); }
+  .rebalance-field{ display:flex; flex-direction:column; }
+  .rebalance-field .rebalance-toggle{ display:flex; align-items:center; gap:8px; height:38px; }
+  .rebalance-field input[type="checkbox"]{ width:16px; height:16px; accent-color:var(--text-1); cursor:pointer; }
+  .rebalance-field .rebalance-toggle label{ font-size:14px; color:var(--text-1); cursor:pointer; margin:0; }
+  .rebalance-field .field-hint{ font-size:11px; color:var(--text-muted); margin-top:4px; max-width:220px; }
   .update-btn{ font-family:"Sora",sans-serif; font-weight:600; font-size:14.5px; padding:13px 26px;
     border-radius:10px; border:none; background:var(--text-1); color:var(--page); cursor:pointer; }
   .update-btn:hover{ opacity:0.88; }
@@ -169,6 +179,7 @@
   td{ padding:12px 10px; border-bottom:1px solid var(--border); text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; }
   tr:last-child td{ border-bottom:none; }
   td.name{ font-family:"IBM Plex Sans",sans-serif; display:flex; align-items:center; gap:8px; font-weight:500; }
+  .muted-inline{ color:var(--text-muted); font-weight:400; font-size:0.9em; }
   .row-total td{ font-weight:600; background:var(--surface-2); }
 
   .tiles{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:22px; }
@@ -387,6 +398,13 @@
             <label for="yearsInput">Horizon Monte&nbsp;Carlo (N ans)</label>
             <input type="number" id="yearsInput" min="1" max="50" value="15">
           </div>
+          <div class="rebalance-field">
+            <div class="rebalance-toggle">
+              <input type="checkbox" id="annualRebalanceInput">
+              <label for="annualRebalanceInput">Réallocation annuelle</label>
+            </div>
+            <div class="field-hint">Sinon, rééquilibrage mensuel (poids cibles réappliqués chaque mois).</div>
+          </div>
         </div>
         <button class="update-btn" id="updateBtn" type="button">Mettre à jour le rapport</button>
       </div>
@@ -526,6 +544,10 @@
       <div class="callout coverage-callout" id="coverageCallout" style="display:none; margin-bottom:22px;">
         <p class="callout-title">Couverture partielle en début de période</p>
         <p id="coverageCalloutText"></p>
+      </div>
+      <div class="callout annual-rebalance-callout" id="annualRebalanceCallout" style="display:none; margin-bottom:22px; border-color:var(--warning);">
+        <p class="callout-title" style="color:var(--warning);">⚠ Actif(s) exclu(s) de la réallocation annuelle</p>
+        <p id="annualRebalanceCalloutText"></p>
       </div>
       <div class="tiles">
         <div class="tile good">
@@ -851,6 +873,7 @@ function rebuildOptionsHTML(){
     html += '</optgroup>';
   });
   html += '<option value="__custom__">Autre (saisir un ticker)…</option>';
+  html += '<option value="__synthetic__">➕ Fonds euro / actif à taux personnalisé…</option>';
   currentOptionsHTML = html;
 }
 
@@ -891,25 +914,32 @@ function loadEtfStatsInBackground(){
 }
 
 /* ---------------- portfolio builder rows ---------------- */
-function addRow(container, ticker, weight, fee){
+function addRow(container, ticker, weight, fee, synthetic){
   const row = document.createElement('div');
   row.className = 'port-row';
-  const initialFee = fee !== undefined && fee !== null ? fee : (ETF_FEES[ticker] !== undefined ? ETF_FEES[ticker] : DEFAULT_TER);
+  const initialFee = fee !== undefined && fee !== null ? fee : (synthetic ? 0 : (ETF_FEES[ticker] !== undefined ? ETF_FEES[ticker] : DEFAULT_TER));
   row.innerHTML = `
     <select class="etf-select">${currentOptionsHTML}</select>
     <div class="weight-field"><input type="number" class="weight-input" min="0" step="1" value="${weight}"><span>%</span></div>
     <div class="fee-field"><input type="number" class="fee-input" min="0" max="10" step="0.01" value="${initialFee}"><span>%</span></div>
     <button class="row-remove" type="button" title="Supprimer">×</button>`;
   const select = row.querySelector('.etf-select');
-  const knownTicker = ticker && [...select.options].some(o=>o.value===ticker);
-  if (knownTicker) select.value = ticker;
-  else if (ticker) select.value = '__custom__';
-  handleCustomTicker(row, ticker && !knownTicker ? ticker : '');
+  if (synthetic){
+    select.value = '__synthetic__';
+    handleSyntheticAsset(row, synthetic);
+  } else {
+    const knownTicker = ticker && [...select.options].some(o=>o.value===ticker);
+    if (knownTicker) select.value = ticker;
+    else if (ticker) select.value = '__custom__';
+    handleCustomTicker(row, ticker && !knownTicker ? ticker : '');
+  }
 
   select.addEventListener('change', ()=>{
-    if (select.value === '__custom__') handleCustomTicker(row, '');
-    else handleCustomTicker(row, null);
-    if (select.value && ETF_FEES[select.value] !== undefined){
+    handleCustomTicker(row, select.value === '__custom__' ? '' : null);
+    handleSyntheticAsset(row, select.value === '__synthetic__' ? {} : null);
+    if (select.value === '__synthetic__'){
+      row.querySelector('.fee-input').value = 0;
+    } else if (select.value && ETF_FEES[select.value] !== undefined){
       row.querySelector('.fee-input').value = ETF_FEES[select.value];
     }
     updateWeightTotal();
@@ -978,6 +1008,70 @@ function handleCustomTicker(row, presetValue){
   }
 }
 
+/* ---------------- synthetic ("fonds euro" / fixed-rate) rows ---------------- */
+function slugifySynthName(name){
+  const base = (name || 'FONDS EURO').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return base || 'FONDS-EURO';
+}
+
+function uniqueSynthTicker(baseSlug, row){
+  const used = new Set();
+  document.querySelectorAll('#builderRows .port-row').forEach(r=>{
+    if (r !== row) used.add(rowTicker(r));
+  });
+  let candidate = baseSlug, n = 2;
+  while (used.has(candidate)){ candidate = `${baseSlug}-${n}`; n++; }
+  return candidate;
+}
+
+function registerSyntheticRow(row){
+  const form = row.querySelector('.synthetic-form');
+  if (!form) return;
+  const name = form.querySelector('.synth-name').value.trim() || 'Fonds Euro';
+  const ticker = uniqueSynthTicker(slugifySynthName(name), row);
+  row.dataset.synthTicker = ticker;
+  ETF_NAMES[ticker] = name;
+  if (ETF_FEES[ticker] === undefined) ETF_FEES[ticker] = 0;
+  savePortfolioState();
+}
+
+function handleSyntheticAsset(row, preset){
+  const select = row.querySelector('.etf-select');
+  let form = row.querySelector('.synthetic-form');
+  if (select.value === '__synthetic__'){
+    if (!form){
+      form = document.createElement('div');
+      form.className = 'synthetic-form';
+      form.style.gridColumn = '1 / 2';
+      form.innerHTML = `
+        <input type="text" class="synth-name" placeholder="Nom (ex: Fonds Euro)">
+        <input type="number" class="synth-return" placeholder="Rendement %/an" step="0.1">
+        <input type="number" class="synth-vol" placeholder="Volatilité %/an" step="0.1" min="0">`;
+      row.insertBefore(form, row.children[1]);
+      form.querySelectorAll('input').forEach(inp=>{
+        inp.addEventListener('input', ()=> registerSyntheticRow(row));
+      });
+    }
+    const nameInput = form.querySelector('.synth-name');
+    const retInput = form.querySelector('.synth-return');
+    const volInput = form.querySelector('.synth-vol');
+    if (preset && (preset.name !== undefined || preset.ann_return !== undefined)){
+      nameInput.value = preset.name || 'Fonds Euro';
+      if (preset.ann_return !== undefined) retInput.value = preset.ann_return;
+      if (preset.ann_vol !== undefined) volInput.value = preset.ann_vol;
+    } else if (!nameInput.value){
+      nameInput.value = 'Fonds Euro';
+      retInput.value = 2.5;
+      volInput.value = 0.5;
+    }
+    registerSyntheticRow(row);
+  } else {
+    if (form) form.remove();
+    delete row.dataset.synthTicker;
+  }
+}
+
 function clearTickerStatus(row){
   const statusEl = row.querySelector('.ticker-status');
   if (statusEl){ statusEl.textContent = ''; statusEl.className = 'ticker-status'; }
@@ -1029,6 +1123,9 @@ function rowTicker(row){
     const custom = row.querySelector('.etf-custom');
     return custom ? custom.value.trim().toUpperCase() : '';
   }
+  if (select.value === '__synthetic__'){
+    return row.dataset.synthTicker || '';
+  }
   return select.value;
 }
 
@@ -1051,6 +1148,7 @@ function savePortfolioState(){
       portfolio: collectPortfolio(),
       years: parseInt(document.getElementById('yearsInput').value, 10) || 15,
       windowMonths: parseInt(document.getElementById('windowInput').value, 10) || 6,
+      annualRebalance: document.getElementById('annualRebalanceInput').checked,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (e) { /* private browsing / storage disabled — persistence just degrades to session-only */ }
@@ -1074,7 +1172,21 @@ function collectPortfolio(){
     const weight = parseFloat(r.querySelector('.weight-input').value) || 0;
     const feeInput = r.querySelector('.fee-input');
     const fee = feeInput ? (parseFloat(feeInput.value) || 0) : DEFAULT_TER;
-    if (ticker && weight > 0) portfolio.push({ticker, weight, fee});
+    if (!ticker || weight <= 0) return;
+    const entry = {ticker, weight, fee};
+    const synthForm = r.querySelector('.synthetic-form');
+    if (synthForm){
+      const annReturn = parseFloat(synthForm.querySelector('.synth-return').value);
+      const annVol = parseFloat(synthForm.querySelector('.synth-vol').value);
+      if (!isNaN(annReturn) && !isNaN(annVol)){
+        entry.synthetic = {
+          name: synthForm.querySelector('.synth-name').value.trim() || 'Fonds Euro',
+          ann_return: annReturn,
+          ann_vol: annVol,
+        };
+      }
+    }
+    portfolio.push(entry);
   });
   return portfolio;
 }
@@ -1096,16 +1208,18 @@ async function initBuilder(){
   const container = document.getElementById('builderRows');
   const saved = loadPortfolioState();
   const initialPortfolio = saved ? saved.portfolio : DEFAULT_PORTFOLIO;
-  initialPortfolio.forEach(p=> addRow(container, p.ticker, p.weight, p.fee));
+  initialPortfolio.forEach(p=> addRow(container, p.ticker, p.weight, p.fee, p.synthetic));
   if (saved){
     document.getElementById('yearsInput').value = saved.years;
     document.getElementById('windowInput').value = saved.windowMonths;
+    document.getElementById('annualRebalanceInput').checked = !!saved.annualRebalance;
   }
 
   document.getElementById('addRowBtn').addEventListener('click', ()=> addRow(container, '', 10));
   document.getElementById('updateBtn').addEventListener('click', runSimulation);
   document.getElementById('yearsInput').addEventListener('change', savePortfolioState);
   document.getElementById('windowInput').addEventListener('change', savePortfolioState);
+  document.getElementById('annualRebalanceInput').addEventListener('change', savePortfolioState);
   setupSortControls();
   setupCompositionToggle();
   setupComparisonSort();
@@ -1121,6 +1235,7 @@ async function runSimulation(){
   const portfolio = collectPortfolio();
   const years = parseInt(document.getElementById('yearsInput').value, 10) || 15;
   const windowMonths = parseInt(document.getElementById('windowInput').value, 10) || 6;
+  const annualRebalance = document.getElementById('annualRebalanceInput').checked;
   const warnBanner = document.getElementById('warnBanner');
   const errBanner = document.getElementById('errBanner');
   warnBanner.style.display = 'none';
@@ -1142,7 +1257,7 @@ async function runSimulation(){
     const res = await fetch('/api/simulate', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({portfolio, years, window_months: windowMonths}),
+      body: JSON.stringify({portfolio, years, window_months: windowMonths, annual_rebalance: annualRebalance}),
     });
     if (!res.ok){
       const err = await res.json().catch(()=>({detail:'Erreur inconnue'}));
@@ -1185,14 +1300,25 @@ function renderReport(data){
     item.className = 'comp-item';
     item.innerHTML = `<div class="swatch" style="background:${color}"></div>
       <div><div class="lbl">${t} — ${w.toFixed(0)}%</div>
-      <div class="sub">${fmtPct(data.assets[t].ann_return)}/an réel</div></div>`;
+      <div class="sub">${fmtPct(data.assets[t].ann_return)}/an réel (${fmtYears(data.assets[t].years)} ans)</div></div>`;
     legend.appendChild(item);
   });
   drawCompositionPie(data);
 
   /* comparison table (sortable) */
-  document.getElementById('comparisonSub').textContent =
-    `Rendement annualisé, recalculé sur la période commune de données disponibles (${data.backtest_period.start} – ${data.backtest_period.end})`;
+  {
+    const ari = data.annual_rebalance_info;
+    const modeNote = data.rebalance_mode === 'annual'
+      ? ` · réallocation annuelle${ari ? ` — ${ari.excluded_tickers.join(', ')} exclu${ari.excluded_tickers.length>1?'s':''} de la ligne Portefeuille (voir le backtest réel ci-dessous)` : ''}`
+      : ' · rééquilibrage mensuel';
+    const coverageNote = (data.rebalance_mode !== 'annual' && data.full_coverage_period.n_months < data.backtest_period.n_months)
+      ? ` La période commune du Portefeuille inclut des années où un ou plusieurs actifs n'existaient pas encore ` +
+        `(historique partiel, poids re-normalisé sur les autres pour ces mois) — voir "Backtest réel" plus bas pour le détail année par année.`
+      : '';
+    document.getElementById('comparisonSub').textContent =
+      `Chaque actif sur sa propre période disponible (durée entre parenthèses) ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}${modeNote}. ` +
+      `Les périodes différant d'un actif à l'autre, la moyenne pondérée des lignes individuelles n'égale pas la ligne Portefeuille — ce n'est pas une erreur.${coverageNote}`;
+  }
   renderComparisonTable(data);
 
   /* risk metrics + resilience + crisis stress-test */
@@ -1205,7 +1331,7 @@ function renderReport(data){
   renderBacktestView();
 
   /* correlation */
-  document.getElementById('corrSub').textContent = `Rendements mensuels, ${data.backtest_period.start} – ${data.backtest_period.end}`;
+  document.getElementById('corrSub').textContent = `Rendements mensuels, ${data.correlation_period.start} – ${data.correlation_period.end} (toujours sur la période étendue, quel que soit le mode de rééquilibrage)`;
   drawCorrTable(data.correlation, tickers);
 
   /* Monte Carlo (may be unavailable if too little full-coverage history) */
@@ -1291,6 +1417,7 @@ function renderComparisonTable(data){
     weight: data.weights_pct[t],
     ret: data.assets[t].ann_return,
     vol: data.assets[t].ann_vol,
+    years: data.assets[t].years,
     fee: (data.fees_pct && data.fees_pct[t]) || 0,
   }));
   const keyMap = {weight:'weight', return:'ret', vol:'vol', fee:'fee'};
@@ -1301,7 +1428,7 @@ function renderComparisonTable(data){
 
   rows.forEach(r=>{
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(r.ticker)}"></span>${r.ticker} — ${ETF_NAMES[r.ticker]||''}</td>
+    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(r.ticker)}"></span><span>${r.ticker} — ${ETF_NAMES[r.ticker]||''} <span class="muted-inline">(${fmtYears(r.years)} ans)</span></span></td>
       <td>${r.weight.toFixed(0)}%</td>
       <td>${fmtPct(r.ret)}</td>
       <td>${r.vol.toFixed(1).replace('.',',')} %</td>
@@ -1329,14 +1456,14 @@ function sharpeClass(v){ if (v===null||v===undefined) return ''; if (v>=1) retur
 
 function renderRiskMetrics(data){
   document.getElementById('riskMetricsSub').textContent =
-    `Calculées sur la période commune de données disponibles (${data.backtest_period.start} – ${data.backtest_period.end})`;
+    `Chaque actif sur sa propre période disponible ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}`;
   const tbody = document.getElementById('riskTableBody');
   tbody.innerHTML = '';
 
   data.used_tickers.forEach(t=>{
     const rm = data.risk_metrics.assets[t];
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(t)}"></span>${t}</td>
+    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(t)}"></span><span>${t} <span class="muted-inline">(${fmtYears(data.assets[t].years)} ans)</span></span></td>
       <td class="${rm?sharpeClass(rm.sharpe):''}">${rm?fmtRatio(rm.sharpe):'—'}</td>
       <td class="${rm?sharpeClass(rm.sortino):''}">${rm?fmtRatio(rm.sortino):'—'}</td>
       <td>${rm?fmtPctCellOrDash(rm.max_drawdown):'—'}</td>
@@ -1411,7 +1538,8 @@ function renderCrisisTable(data){
   });
 
   document.getElementById('crisisNote').textContent =
-    "N/D = période antérieure à l'historique disponible pour cet actif (colonnes individuelles : historique complet de l'actif) ou pour le portefeuille (colonne Portefeuille : limitée à la période de backtest ci-dessus).";
+    "N/D = période antérieure à l'historique disponible pour cet actif (colonnes individuelles : historique complet de l'actif) ou pour le portefeuille (colonne Portefeuille : limitée à la période de backtest ci-dessus). " +
+    "Ces chiffres portent sur la période exacte de la crise (souvent quelques mois) et peuvent donc être bien pires que la \"pire performance\" glissante ci-dessous : une chute brève peut être absorbée par une bonne année civile ou une reprise rapide juste après, sans qu'aucune fenêtre glissante ne l'isole complètement.";
 }
 
 /* ---------------- portfolio optimization ---------------- */
@@ -1546,8 +1674,17 @@ function renderBacktestView(){
   document.getElementById('worstRealTag').textContent = `Pire performance (${wm} mois)`;
   document.getElementById('rollChartTitle').textContent = `Performance ${subject} sur ${wm} mois glissants`;
   document.getElementById('annualChartTitle').textContent = `Performance annuelle historique ${subject}`;
-  document.getElementById('backtestSub').textContent =
-    `Sur la période de données réelles disponible pour ces actifs : ${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)} (${data.backtest_period.n_years} ans, ${data.backtest_period.n_months} mois)`;
+  if (isPortfolio){
+    const rebalanceNote = data.rebalance_mode === 'annual'
+      ? ' · rééquilibrage annuel (les positions dérivent 12 mois avant retour aux poids cibles)'
+      : ' · rééquilibrage mensuel (poids cibles réappliqués chaque mois)';
+    document.getElementById('backtestSub').textContent =
+      `Sur la période de données réelles disponible pour ces actifs : ${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)} (${data.backtest_period.n_years} ans, ${data.backtest_period.n_months} mois)${rebalanceNote}`;
+  } else {
+    const p = data.assets[BACKTEST_FILTER].period;
+    document.getElementById('backtestSub').textContent =
+      `Sur l'historique disponible pour ${BACKTEST_FILTER} : ${fmtMonthPeriod(p.start)} → ${fmtMonthPeriod(p.end)} (${data.assets[BACKTEST_FILTER].years} ans, ${p.n_months} mois)`;
+  }
 
   if (rollWindow.values && rollWindow.values.length){
     document.getElementById('bestRealValue').textContent = fmtPct(rollWindow.best.value);
@@ -1577,6 +1714,22 @@ function renderBacktestView(){
       `Ligne pointillée grise = période de couverture partielle. Couverture complète (tous les actifs) à partir de <b>${fmtMonthPeriod(fcp.start)}</b>.`;
   } else {
     coverageCallout.style.display = 'none';
+  }
+
+  const annualCallout = document.getElementById('annualRebalanceCallout');
+  const ari = data.annual_rebalance_info;
+  if (isPortfolio && ari){
+    annualCallout.style.display = 'block';
+    document.getElementById('annualRebalanceCalloutText').innerHTML =
+      `${ari.excluded_tickers.join(', ')} pèse${ari.excluded_tickers.length>1?'nt':''} moins de 10&nbsp;% du portefeuille et ` +
+      `${ari.excluded_tickers.length>1?'ont':'a'} moins de 5 ans d'historique propre — une position qui doit exister dès le début pour pouvoir ` +
+      `dériver puis se rééquilibrer chaque année n'est pas définissable pour elle sur tout l'historique, donc elle est <b>exclue de la ligne ` +
+      `Portefeuille en mode annuel</b> et son poids redistribué sur les autres actifs (même règle que pour Monte Carlo) — elle garde ses ` +
+      `propres statistiques individuelles partout ailleurs dans le rapport. Résultat : la ligne Portefeuille est testée sur ` +
+      `<b>${ari.annual_window_years} ans</b> (${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)}) en annuel, ` +
+      `contre <b>${ari.extended_window_years} ans</b> en mensuel (qui tolère les historiques partiels mois par mois plutôt que d'exclure l'actif).`;
+  } else {
+    annualCallout.style.display = 'none';
   }
 
   if (rollWindow.values && rollWindow.values.length){
@@ -1617,9 +1770,15 @@ function drawLineChart(rollWindow, lineColor){
     html += `<line class="${gv===0?'baseline':'gridline'}" x1="${ML}" y1="${y}" x2="${W-MR}" y2="${y}"/>`;
     html += `<text class="axis-label" x="${ML-8}" y="${y+3}" text-anchor="end">${gv}%</text>`;
   }
+  const janTotal = dates.filter(d=>d.endsWith('-01')).length;
+  const janStep = janTotal > 30 ? 5 : (janTotal > 15 ? 2 : 1);
+  let janSeen = 0;
   dates.forEach((d,i)=>{
     if(d.endsWith('-01')){
-      html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">${d.slice(0,4)}</text>`;
+      if (janSeen % janStep === 0){
+        html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">${d.slice(0,4)}</text>`;
+      }
+      janSeen++;
     }
   });
 
@@ -1699,6 +1858,7 @@ function drawAnnualChart(annualReturns){
     html += `<text class="axis-label" x="${ML-8}" y="${y+3}" text-anchor="end">${gv}%</text>`;
   }
 
+  const yearStep = n > 30 ? 5 : (n > 15 ? 2 : 1);
   annualReturns.forEach((a,i)=>{
     const x = ML + i*xStep;
     const y = yOf(a.return);
@@ -1706,7 +1866,9 @@ function drawAnnualChart(annualReturns){
     const cls = a.return >= 0 ? 'good' : 'bad';
     const opacity = a.partial ? 0.45 : 0.9;
     html += `<rect class="year-bar ${cls}" data-i="${i}" x="${(x+xStep*0.15).toFixed(2)}" y="${top.toFixed(2)}" width="${(xStep*0.7).toFixed(2)}" height="${Math.max(h,1).toFixed(2)}" rx="2" opacity="${opacity}"/>`;
-    html += `<text class="axis-label" x="${x+xStep/2}" y="${H-6}" text-anchor="middle">${a.year}${a.partial?'*':''}</text>`;
+    if (i % yearStep === 0){
+      html += `<text class="axis-label" x="${x+xStep/2}" y="${H-6}" text-anchor="middle">${a.year}${a.partial?'*':''}</text>`;
+    }
   });
 
   svg.innerHTML = html;
@@ -2212,9 +2374,10 @@ function setupSavedPortfolios(){
     if (!saved) return;
     const container = document.getElementById('builderRows');
     container.innerHTML = '';
-    saved.portfolio.forEach(p=> addRow(container, p.ticker, p.weight, p.fee));
+    saved.portfolio.forEach(p=> addRow(container, p.ticker, p.weight, p.fee, p.synthetic));
     document.getElementById('yearsInput').value = saved.years;
     document.getElementById('windowInput').value = saved.window_months;
+    document.getElementById('annualRebalanceInput').checked = !!saved.annual_rebalance;
     savePortfolioState();
     document.getElementById('savedPortfoliosNote').textContent = `« ${saved.name} » chargé.`;
     runSimulation();
@@ -2247,11 +2410,12 @@ function setupSavedPortfolios(){
     const portfolio = collectPortfolio();
     const years = parseInt(document.getElementById('yearsInput').value, 10) || 15;
     const window_months = parseInt(document.getElementById('windowInput').value, 10) || 6;
+    const annual_rebalance = document.getElementById('annualRebalanceInput').checked;
     try {
       const res = await fetch('/api/portfolios', {
         method: 'POST',
         headers: {'Content-Type':'application/json', ...authHeaders()},
-        body: JSON.stringify({name, portfolio, years, window_months}),
+        body: JSON.stringify({name, portfolio, years, window_months, annual_rebalance}),
       });
       const info = await res.json();
       if (!res.ok) throw new Error(info.detail || 'Erreur inconnue');

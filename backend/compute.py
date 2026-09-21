@@ -5,6 +5,7 @@ disk-cached table of quick return/volatility stats for every ETF in the
 curated catalogue, used to sort the picker in the frontend.
 """
 
+import hashlib
 import json
 import threading
 import time
@@ -27,7 +28,6 @@ MIN_OVERLAP_MONTHS = 6
 MIN_MONTHS_FOR_OPTIMIZATION = 24  # a covariance matrix estimated on less is mostly noise
 DEFAULT_BLOCK_MONTHS = 6
 N_SIMS = 5000
-MAX_MISSING_WEIGHT_FOR_EXTENSION = 0.25
 MC_EXCLUDE_MAX_WEIGHT = 0.10
 MC_EXCLUDE_MIN_YEARS = 5
 
@@ -212,25 +212,85 @@ def _fetch_all_eur_series(tickers):
     return eur_series, failed
 
 
+SYNTHETIC_HISTORY_MONTHS = 480  # 40 years — wide enough to never bottleneck a real backtest
+
+
+def _generate_synthetic_price_series(ticker, ann_return_pct, ann_vol_pct):
+    """A user-defined fixed-rate asset ("fonds euro", a guaranteed-capital
+    savings vehicle, or any other hand-parameterized instrument) has no real
+    market history to fetch — this synthesizes one instead: an i.i.d.
+    monthly-return series, deterministically seeded from the ticker name and
+    parameters (stable across requests and server restarts, but distinct
+    between differently-configured or differently-named rows so two such
+    assets don't spuriously show a 1.0 correlation), affine-rescaled so its
+    OWN realized annualized return/volatility match the user's inputs
+    exactly regardless of which sub-window a later calculation uses. Spans
+    40 years so it's never the asset that shortens a portfolio's backtest.
+    """
+    monthly_mean = (1 + ann_return_pct / 100.0) ** (1 / 12) - 1
+    monthly_std = (ann_vol_pct / 100.0) / np.sqrt(12)
+
+    seed_material = f"{ticker}|{ann_return_pct}|{ann_vol_pct}".encode()
+    seed = int(hashlib.sha256(seed_material).hexdigest()[:8], 16)
+    rng = np.random.default_rng(seed)
+
+    n = SYNTHETIC_HISTORY_MONTHS
+    if monthly_std > 0:
+        raw = rng.standard_normal(n)
+        scaled = (raw - raw.mean()) / raw.std(ddof=1) * monthly_std + monthly_mean
+    else:
+        scaled = np.full(n, monthly_mean)
+
+    end = pd.Period(pd.Timestamp.now(), freq="M")
+    full_index = pd.period_range(end=end, periods=n + 1, freq="M")
+    full_prices = np.concatenate(([100.0], 100.0 * np.cumprod(1 + scaled)))
+    return pd.Series(full_prices, index=full_index)
+
+
+def _resolve_eur_series(portfolio, tickers):
+    """Splits real tickers (fetched from Yahoo, as usual) from synthetic
+    ("fonds euro"-style) ones (generated locally), then merges both into a
+    single eur_series dict so every downstream calculation — fees, blending,
+    correlation, Monte Carlo — treats them identically.
+    """
+    synthetic_by_ticker = {}
+    for row in portfolio:
+        spec = row.get("synthetic")
+        if spec:
+            synthetic_by_ticker[str(row["ticker"]).strip().upper()] = spec
+
+    real_tickers = [t for t in tickers if t not in synthetic_by_ticker]
+    eur_series, failed = _fetch_all_eur_series(real_tickers)
+    for t in tickers:
+        if t in synthetic_by_ticker:
+            spec = synthetic_by_ticker[t]
+            eur_series[t] = _generate_synthetic_price_series(
+                t, float(spec["ann_return"]), float(spec["ann_vol"])
+            )
+    return eur_series, failed
+
+
 def _determine_extended_start(rets_df, weights_by_ticker):
     """A single very-recent, small-weight ETF shouldn't truncate the whole
-    backtest to its own short inception date. Starting from the newest
-    asset's inception and walking backwards through assets ordered by start
-    date (most recent first), this finds the earliest date at which the
-    assets still missing never exceed MAX_MISSING_WEIGHT_FOR_EXTENSION of
-    total portfolio weight — i.e. how far back we can extend the period
-    while only ever "missing" an acceptably small slice of the portfolio.
+    backtest to its own short inception date — the real backtest instead
+    tolerates it being absent, reweighting among whatever assets ARE present
+    each month (see the prorate step in run_simulation). But that tolerance
+    needs a limit: letting ANY combination of assets be "temporarily
+    missing" as long as their COMBINED weight stays under a cap can go too
+    far, because several individually-modest positions (say 5-11% each) can
+    together make up an entire "growth" sleeve of a portfolio otherwise
+    dominated by one very old, low-volatility asset — and get silently
+    excluded for a decade or more, testing a materially different portfolio
+    than the one actually being built for most of that history. So the
+    window is only extended past an asset's own inception if THAT asset, on
+    its own, is a genuinely minor (<10%, matching MC_EXCLUDE_MAX_WEIGHT)
+    position — anything at or above that weight must have data for the
+    entire tested window, however far back that pushes the start date.
     """
-    first_valid = {t: rets_df[t].first_valid_index() for t in rets_df.columns}
-    order = sorted(rets_df.columns, key=lambda t: first_valid[t], reverse=True)
-    extended_start = first_valid[order[0]]
-    cum_excluded = 0.0
-    for i, ticker in enumerate(order):
-        cum_excluded += weights_by_ticker[ticker]
-        if cum_excluded > MAX_MISSING_WEIGHT_FOR_EXTENSION:
-            break
-        extended_start = first_valid[order[i + 1]] if i + 1 < len(order) else rets_df.index.min()
-    return extended_start
+    required = [t for t, w in weights_by_ticker.items() if w >= MC_EXCLUDE_MAX_WEIGHT]
+    if not required:
+        required = [max(weights_by_ticker, key=weights_by_ticker.get)]
+    return max(rets_df[t].first_valid_index() for t in required)
 
 
 def _max_drawdown_pct(returns):
@@ -364,6 +424,34 @@ def compute_resilience_score(ann_vol_pct, max_dd_pct, sharpe, avg_corr, crisis_t
     return {"score": round(total_score, 1), "label": label, "components": components, "weights": weights_map}
 
 
+def _drift_with_periodic_rebalance(returns_matrix, weights, rebalance_every=None):
+    """Portfolio monthly-return series from a (T, n_assets) matrix of asset
+    returns and a target weight vector.
+
+    rebalance_every=None means the target weights are re-applied every
+    single row — mathematically identical to `returns_matrix @ weights` —
+    which is what "rebalance monthly" means in practice (this is the
+    default used everywhere else in this file). Passing e.g. 12 instead
+    lets each asset's position drift with its own return for that many
+    rows before being reset back to the target proportions, modeling an
+    investor who only rebalances once a year (on the anniversary of the
+    period start, not necessarily the calendar year) rather than every
+    single month.
+    """
+    if rebalance_every is None:
+        return returns_matrix @ weights
+    n_months = returns_matrix.shape[0]
+    wealth = weights.copy()
+    port_ret = np.empty(n_months)
+    for t in range(n_months):
+        if t > 0 and t % rebalance_every == 0:
+            wealth = weights * wealth.sum()
+        prev_total = wealth.sum()
+        wealth = wealth * (1 + returns_matrix[t])
+        port_ret[t] = wealth.sum() / prev_total - 1
+    return port_ret
+
+
 def _block_bootstrap_path(returns_matrix, horizon_months, block_months, rng):
     n_hist = returns_matrix.shape[0]
     months = []
@@ -373,13 +461,25 @@ def _block_bootstrap_path(returns_matrix, horizon_months, block_months, rng):
     return returns_matrix[months[:horizon_months]]
 
 
-def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
+def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS, rebalance_mode="monthly"):
     """portfolio: list of {"ticker": str, "weight": float (percent)}.
     years: Monte-Carlo horizon in years for the N-year performance simulation.
     window_months: length (in months) of the rolling window used for the
     best/worst-window backtest, its Monte-Carlo distribution, and the
     bootstrap block size.
+    rebalance_mode: "monthly" (default) reapplies the target weights every
+    month — equivalent to rebalancing at every observation, the simplest
+    and most common backtesting assumption. "annual" instead lets each
+    asset's position drift with its own returns for 12 months at a time
+    before resetting to the target weights, modeling an investor who only
+    rebalances once a year. Because a drifting multi-asset position isn't
+    well-defined for months where an asset doesn't exist yet, "annual" mode
+    can only use the sub-period where every selected asset has data
+    (same restriction Monte Carlo already has) rather than the extended,
+    prorated window "monthly" mode allows.
     """
+    if rebalance_mode not in ("monthly", "annual"):
+        raise SimulationError("rebalance_mode doit être 'monthly' ou 'annual'.")
     if not portfolio:
         raise SimulationError("Le portefeuille est vide.")
     if not (1 <= years <= 50):
@@ -401,7 +501,7 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
         raise SimulationError("Aucune pondération positive fournie.")
 
     tickers = list(merged_weights.keys())
-    eur_series, failed = _fetch_all_eur_series(tickers)
+    eur_series, failed = _resolve_eur_series(portfolio, tickers)
 
     used_tickers = [t for t in tickers if t in eur_series]
     if not used_tickers:
@@ -426,39 +526,113 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
     fee_monthly = pd.Series({t: fee_by_ticker[t] / 100.0 / 12.0 for t in used_tickers})
     rets_df = rets_df.sub(fee_monthly, axis=1)
 
+    # A joint, NaN-free calculation across all assets (Monte Carlo's bootstrap,
+    # and annual rebalancing's drift-then-reset) can only use the sub-period
+    # where every included asset actually has data. A small (<10% weight),
+    # recently-launched (<5 years of its own history) asset is excluded from
+    # such calculations entirely rather than letting it squeeze the shared
+    # window down to its own short lifetime — its weight is redistributed
+    # proportionally among the remaining assets. The real (monthly-rebalance)
+    # backtest below doesn't need this: it tolerates missing assets month by
+    # month via prorating instead.
+    own_years = {t: rets_df[t].dropna().shape[0] / 12.0 for t in used_tickers}
+    mc_excluded = [
+        t
+        for t in used_tickers
+        if weights_by_ticker[t] < MC_EXCLUDE_MAX_WEIGHT and own_years[t] < MC_EXCLUDE_MIN_YEARS
+    ]
+    mc_tickers = [t for t in used_tickers if t not in mc_excluded]
+
     extended_start = _determine_extended_start(rets_df, weights_by_ticker)
     common_end = min(rets_df[t].last_valid_index() for t in used_tickers)
-    window_df = rets_df.loc[extended_start:common_end, used_tickers]
+    full_window_df = rets_df.loc[extended_start:common_end, used_tickers]
 
-    if len(window_df) < MIN_OVERLAP_MONTHS:
+    if len(full_window_df) < MIN_OVERLAP_MONTHS:
         raise SimulationError(
-            f"Historique disponible trop court ({len(window_df)} mois) pour ces actifs "
+            f"Historique disponible trop court ({len(full_window_df)} mois) pour ces actifs "
             f"— {MIN_OVERLAP_MONTHS} mois minimum requis."
         )
 
+    annual_rebalance_info = None
+    if rebalance_mode == "annual":
+        # a drifting position isn't defined before every asset exists, so
+        # annual rebalancing needs a NaN-free matrix — same requirement as
+        # Monte Carlo above, so it reuses the same small/young exclusion
+        # rather than letting one such asset collapse the whole tested
+        # period down to its own short lifetime.
+        if len(mc_tickers) < 2:
+            raise SimulationError(
+                "Pas assez d'actifs significatifs (hors positions <10% pesant <5 ans d'historique) "
+                "pour une réallocation annuelle fiable. Essayez le rééquilibrage mensuel."
+            )
+        core_raw_w = np.array([weights_by_ticker[t] for t in mc_tickers], dtype=float)
+        core_weights = core_raw_w / core_raw_w.sum()
+        window_df = rets_df.loc[:, mc_tickers].dropna()
+        if len(window_df) < MIN_OVERLAP_MONTHS:
+            raise SimulationError(
+                f"Historique commun aux actifs principaux trop court ({len(window_df)} mois) pour "
+                f"une réallocation annuelle fiable — {MIN_OVERLAP_MONTHS} mois minimum requis. "
+                "Essayez le rééquilibrage mensuel, qui tolère les historiques partiels."
+            )
+        if mc_excluded:
+            annual_rebalance_info = {
+                "excluded_tickers": mc_excluded,
+                "extended_window_months": len(full_window_df),
+                "extended_window_years": round(len(full_window_df) / 12, 1),
+                "annual_window_months": len(window_df),
+                "annual_window_years": round(len(window_df) / 12, 1),
+            }
+        used_tickers_for_portfolio = mc_tickers
+        weights_for_portfolio = core_weights
+    else:
+        window_df = full_window_df
+        used_tickers_for_portfolio = used_tickers
+        weights_for_portfolio = weights
+
     # blend/prorate: months where one or more (collectively <=25% weight)
     # assets are missing get their return computed over the assets that ARE
-    # present, reweighted back up to 100% of target weight.
+    # present, reweighted back up to 100% of target weight. (Annual mode's
+    # window_df is already gap-free by construction, so coverage is always
+    # 100% there — prorating only ever applies to monthly mode.)
     avail = window_df.notna()
-    weight_row = weights.reshape(1, -1)
+    weight_row = weights_for_portfolio.reshape(1, -1)
     weight_matrix = avail.values.astype(float) * weight_row
     coverage = weight_matrix.sum(axis=1)
     normalized_w = weight_matrix / coverage.reshape(-1, 1)
-    port_ret = pd.Series(
-        (normalized_w * window_df.fillna(0.0).values).sum(axis=1), index=window_df.index
-    )
+    if rebalance_mode == "annual":
+        port_ret = pd.Series(
+            _drift_with_periodic_rebalance(window_df.values, weights_for_portfolio, rebalance_every=12),
+            index=window_df.index,
+        )
+    else:
+        port_ret = pd.Series(
+            (normalized_w * window_df.fillna(0.0).values).sum(axis=1), index=window_df.index
+        )
     coverage_series = pd.Series(coverage, index=window_df.index)
     missing_by_date = {
-        d: [used_tickers[j] for j in range(len(used_tickers)) if not avail.values[i, j]]
+        d: [
+            used_tickers_for_portfolio[j]
+            for j in range(len(used_tickers_for_portfolio))
+            if not avail.values[i, j]
+        ]
         for i, d in enumerate(window_df.index)
     }
 
-    # per-asset stats over each asset's own available data within the window
-    ann_ret = {t: (1 + window_df[t].dropna().mean()) ** 12 - 1 for t in used_tickers}
-    ann_vol = {t: window_df[t].dropna().std() * np.sqrt(12) for t in used_tickers}
+    # per-asset stats use each ticker's own maximum available history (not
+    # the portfolio's shared backtest window) — a short-lived asset elsewhere
+    # in the portfolio shouldn't truncate what we know about a long-running
+    # one. Matches the convention already used for per-asset crisis analysis.
+    asset_full_history = {t: rets_df[t].dropna() for t in used_tickers}
+    ann_ret = {t: (1 + s.mean()) ** 12 - 1 for t, s in asset_full_history.items()}
+    ann_vol = {t: s.std() * np.sqrt(12) for t, s in asset_full_history.items()}
+    asset_years = {t: round(len(s) / 12, 1) for t, s in asset_full_history.items()}
     port_ann_ret = (1 + port_ret.mean()) ** 12 - 1
     port_ann_vol = port_ret.std() * np.sqrt(12)
-    corr = window_df.corr()  # pandas uses pairwise-complete observations by default
+    # always over every selected asset and the full extended window,
+    # regardless of rebalance mode — correlation is a property of the
+    # assets themselves, and the diversification score below needs it
+    # aligned with the full `weights`/`used_tickers` arrays.
+    corr = full_window_df.corr()  # pandas uses pairwise-complete observations by default
 
     roll_window = (1 + port_ret).rolling(window_months).apply(np.prod, raw=True) - 1
     roll_window = roll_window.dropna()
@@ -504,7 +678,7 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
     # réel" section to a single product instead of the blended portfolio
     asset_series = {}
     for t in used_tickers:
-        s = window_df[t].dropna()
+        s = asset_full_history[t]
         entry = {"roll_window": {"dates": [], "values": []}, "annual_returns": []}
         if len(s) >= window_months:
             a_roll = (1 + s).rolling(window_months).apply(np.prod, raw=True) - 1
@@ -541,13 +715,13 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
         asset_series[t] = entry
 
     # risk metrics + crisis stress-test + resilience score. Per-asset risk
-    # metrics reuse the same window as the return/vol table above (for a
-    # consistent comparison); per-asset crisis returns instead use each
-    # asset's own FULL history (rets_df, pre-truncation) since a stress test
-    # is specifically about looking as far back as each asset allows, even
-    # if a shorter-lived portfolio member limited the main backtest window.
+    # metrics use each asset's own full available history (asset_full_history,
+    # same as the return/vol table and per-asset crisis returns above) — a
+    # short-lived portfolio member shouldn't cut short what we can measure
+    # about a long-running one. Only the PORTFOLIO-level figures (which need
+    # every asset to line up on the same calendar) are limited to window_df.
     portfolio_risk = compute_risk_metrics(port_ret)
-    asset_risk = {t: compute_risk_metrics(window_df[t].dropna()) for t in used_tickers}
+    asset_risk = {t: compute_risk_metrics(s) for t, s in asset_full_history.items()}
     portfolio_crisis = compute_crisis_table(port_ret)
     asset_crisis = {t: compute_crisis_table(rets_df[t].dropna()) for t in used_tickers}
 
@@ -587,22 +761,11 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
             "max": round(float(np.max(arr)) * 100, 2),
         }
 
-    # Monte Carlo needs a clean, NaN-free joint-asset return matrix (it
-    # resamples whole months across all assets at once to preserve their
-    # real correlations) — so unlike the real backtest above, it can only
-    # use the sub-period where every included asset actually has data. A
-    # small (<10% weight), recently-launched (<5 years of its own history)
-    # asset is dropped from Monte Carlo entirely rather than letting it
-    # squeeze that shared window down to its own short lifetime — its own
-    # weight is redistributed proportionally among the remaining assets.
-    own_years = {t: rets_df[t].dropna().shape[0] / 12.0 for t in used_tickers}
-    mc_excluded = [
-        t
-        for t in used_tickers
-        if weights_by_ticker[t] < MC_EXCLUDE_MAX_WEIGHT and own_years[t] < MC_EXCLUDE_MIN_YEARS
-    ]
-    mc_tickers = [t for t in used_tickers if t not in mc_excluded]
-
+    # Monte Carlo needs the same clean, NaN-free joint-asset return matrix as
+    # annual rebalancing above (it resamples whole months across all assets
+    # at once to preserve their real correlations) — mc_excluded/mc_tickers
+    # were already computed for that shared reason near the top of this
+    # function.
     if mc_tickers:
         mc_raw_w = np.array([weights_by_ticker[t] for t in mc_tickers], dtype=float)
         mc_weights = mc_raw_w / mc_raw_w.sum()
@@ -634,7 +797,9 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
 
         for i in range(N_SIMS):
             path = _block_bootstrap_path(R, horizon_months, window_months, rng)
-            port = path.dot(mc_weights)
+            port = _drift_with_periodic_rebalance(
+                path, mc_weights, rebalance_every=12 if rebalance_mode == "annual" else None
+            )
             wealth = np.cumprod(1 + port)
             fan_paths[i] = wealth
             w_full = np.concatenate(([1.0], wealth))
@@ -690,17 +855,34 @@ def run_simulation(portfolio, years, window_months=DEFAULT_BLOCK_MONTHS):
         "fees_pct": {t: round(fee_by_ticker[t], 3) for t in used_tickers},
         "failed": failed,
         "window_months": window_months,
+        "rebalance_mode": rebalance_mode,
+        "annual_rebalance_info": annual_rebalance_info,
         "backtest_period": {
             "start": str(window_df.index.min()),
             "end": str(window_df.index.max()),
             "n_months": len(window_df),
             "n_years": round(len(window_df) / 12, 1),
         },
+        # the correlation matrix always covers every selected asset over the
+        # full extended window (see `corr` above) regardless of rebalance
+        # mode, so it needs its own period label rather than reusing
+        # backtest_period (which, in annual mode, describes a shorter,
+        # core-assets-only window).
+        "correlation_period": {
+            "start": str(full_window_df.index.min()),
+            "end": str(full_window_df.index.max()),
+        },
         "full_coverage_period": full_coverage_period,
         "assets": {
             t: {
                 "ann_return": round(float(ann_ret[t]) * 100, 2),
                 "ann_vol": round(float(ann_vol[t]) * 100, 2),
+                "years": asset_years[t],
+                "period": {
+                    "start": str(asset_full_history[t].index.min()),
+                    "end": str(asset_full_history[t].index.max()),
+                    "n_months": len(asset_full_history[t]),
+                },
             }
             for t in used_tickers
         },
@@ -776,7 +958,7 @@ def optimize_portfolio(portfolio, risk_free=RISK_FREE_RATE, fees=None, max_devia
         raise SimulationError("Il faut au moins 2 actifs valides pour optimiser un portefeuille.")
 
     tickers = list(merged_weights.keys())
-    eur_series, failed = _fetch_all_eur_series(tickers)
+    eur_series, failed = _resolve_eur_series(portfolio, tickers)
     used = [t for t in tickers if t in eur_series]
     if len(used) < 2:
         raise SimulationError("Au moins 2 des actifs sélectionnés doivent être valides pour optimiser.")
