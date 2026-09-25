@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()  # must run before any of the imports below read os.environ at module load time
+
 import json
 import re
 from pathlib import Path
