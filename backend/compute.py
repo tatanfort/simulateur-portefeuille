@@ -67,6 +67,7 @@ TICKER_SUFFIX_CANDIDATES = [".L", ".AS", ".DE", ".PA", ".MI", ".SW", ".TO"]
 STATS_CACHE_FILE = Path(__file__).resolve().parent / "etf_stats_cache.json"
 STATS_TTL_SECONDS = 24 * 3600
 STATS_LOOKBACK_YEARS = 10
+STATS_SCHEMA_VERSION = 2  # bump whenever _compute_one_etf_stats's return shape changes
 STATS_MAX_WORKERS = 16
 
 
@@ -1062,13 +1063,19 @@ def optimize_portfolio(portfolio, risk_free=RISK_FREE_RATE, fees=None, max_devia
 # ---------------------------------------------------------------------------
 
 
-def compute_ann_stats(series, years=STATS_LOOKBACK_YEARS, fee_annual_pct=0.0):
+def _windowed_returns(series, years=STATS_LOOKBACK_YEARS, fee_annual_pct=0.0):
     rets = series.pct_change().dropna()
-    if len(rets) == 0:
+    if len(rets) < 2:
+        # std() needs at least 2 points to be defined (ddof=1) - a single
+        # return produces NaN, which then blows up JSON serialization
         raise SimulationError("historique insuffisant")
     rets = rets - fee_annual_pct / 100.0 / 12.0
     window = years * 12
-    used = rets.tail(window) if len(rets) > window else rets
+    return rets.tail(window) if len(rets) > window else rets
+
+
+def compute_ann_stats(series, years=STATS_LOOKBACK_YEARS, fee_annual_pct=0.0):
+    used = _windowed_returns(series, years, fee_annual_pct)
     ann_return = (1 + used.mean()) ** 12 - 1
     ann_vol = used.std() * np.sqrt(12)
     return float(ann_return), float(ann_vol), float(len(used) / 12)
@@ -1078,12 +1085,18 @@ def _compute_one_etf_stats(ticker):
     try:
         series = _to_eur_series(ticker)
         fee = ALL_FEES.get(ticker, DEFAULT_TER)
-        ann_return, ann_vol, years_used = compute_ann_stats(series, fee_annual_pct=fee)
+        used = _windowed_returns(series, fee_annual_pct=fee)
+        ann_return = float((1 + used.mean()) ** 12 - 1)
+        ann_vol = float(used.std() * np.sqrt(12))
+        risk = compute_risk_metrics(used) or {}
         return ticker, {
             "ann_return": round(ann_return * 100, 2),
             "ann_vol": round(ann_vol * 100, 2),
-            "years": round(years_used, 1),
+            "years": round(len(used) / 12, 1),
             "ter": fee,
+            "sharpe": risk.get("sharpe"),
+            "sortino": risk.get("sortino"),
+            "max_drawdown": risk.get("max_drawdown"),
         }
     except Exception as exc:
         return ticker, {"error": str(exc)}
@@ -1127,7 +1140,7 @@ def _refresh_stats_async(tickers):
         global _stats_refreshing
         try:
             stats = _compute_all_etf_stats(tickers)
-            _save_stats_cache({"computed_at": time.time(), "stats": stats})
+            _save_stats_cache({"computed_at": time.time(), "schema": STATS_SCHEMA_VERSION, "stats": stats})
         finally:
             with _stats_refresh_lock:
                 _stats_refreshing = False
@@ -1138,13 +1151,14 @@ def _refresh_stats_async(tickers):
 def get_etf_stats(tickers):
     """Stale-while-revalidate: always return instantly if a cache exists
     (even if stale), kicking off a non-blocking background refresh; only
-    the very first call ever (no disk cache yet) has to compute inline.
+    the very first call ever (no disk cache yet, or an outdated schema from
+    before new fields were added) has to compute inline.
     """
     cached = _load_stats_cache()
     now = time.time()
-    if cached is None:
+    if cached is None or cached.get("schema") != STATS_SCHEMA_VERSION:
         stats = _compute_all_etf_stats(tickers)
-        payload = {"computed_at": now, "stats": stats}
+        payload = {"computed_at": now, "schema": STATS_SCHEMA_VERSION, "stats": stats}
         _save_stats_cache(payload)
         return payload
     if now - cached.get("computed_at", 0) > STATS_TTL_SECONDS:

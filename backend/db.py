@@ -7,7 +7,7 @@ ephemeral filesystem.
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -32,3 +32,27 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_lightweight_migrations():
+    """`Base.metadata.create_all` only creates missing TABLES, never adds
+    columns to a table that already exists - so an already-deployed database
+    needs its `users` table patched by hand whenever a column is added to
+    the model. No Alembic here (overkill for a personal project); just a
+    small idempotent ALTER TABLE runner, safe to call on every startup.
+    """
+    insp = inspect(engine)
+    if "users" not in insp.get_table_names():
+        return  # fresh DB - create_all() already created it with every column
+    existing = {c["name"] for c in insp.get_columns("users")}
+    new_columns = {
+        "email_verified": "BOOLEAN DEFAULT FALSE",
+        "verification_token": "VARCHAR",
+        "verification_token_expires": "TIMESTAMP",
+        "reset_token": "VARCHAR",
+        "reset_token_expires": "TIMESTAMP",
+    }
+    with engine.begin() as conn:
+        for name, ddl_type in new_columns.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl_type}"))

@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Simulateur de portefeuille ETF</title>
+<script>
+  // applied before first paint to avoid a flash of the wrong theme when the
+  // user has an explicit override that differs from the OS preference
+  (function(){
+    try {
+      var t = localStorage.getItem('portfolioSimulator.theme.v1');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -25,6 +35,7 @@
     --warning:     #fab219;
     --accent:      #96690a;
     --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+    --s6: #7c5cbf; --s7: #17a2b8; --s8: #a1662f; --s9: #6b7280;
     --s1-a2: rgba(42,120,214,0.14); --s1-a1: rgba(42,120,214,0.30);
     --shadow: 0 1px 2px rgba(11,11,11,0.04), 0 8px 24px -12px rgba(11,11,11,0.12);
   }
@@ -36,6 +47,7 @@
       --border:rgba(255,255,255,0.10); --grid:#2c2c2a; --baseline:#3a3a37;
       --good:#0ca30c; --good-ink:#2fca2f; --critical:#e66767; --warning:#fab219; --accent:#d9a441;
       --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+      --s6:#9575d6; --s7:#22b8cf; --s8:#b8763a; --s9:#838a99;
       --s1-a2: rgba(57,135,229,0.20); --s1-a1: rgba(57,135,229,0.38);
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
     }
@@ -103,6 +115,20 @@
     font-family:"IBM Plex Sans",sans-serif; font-size:13.5px; padding:9px 10px;
     border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); width:100%;
   }
+  .etf-select{ display:none; }
+  .etf-cell{ position:relative; min-height:38px; }
+  .etf-picker-trigger{ display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+    font-family:"IBM Plex Sans",sans-serif; font-size:13.5px; padding:9px 30px 9px 10px;
+    border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); cursor:pointer; }
+  .etf-picker-trigger[hidden]{ display:none; }
+  .etf-picker-trigger:hover{ border-color:var(--text-muted); }
+  .etf-picker-trigger .etf-picker-placeholder{ color:var(--text-muted); }
+  .etf-picker-trigger .tk{ font-weight:600; flex:none; }
+  .etf-picker-trigger .nm{ color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .etf-picker-reopen{ position:absolute; right:6px; top:19px; transform:translateY(-50%); width:20px; height:20px;
+    border-radius:6px; border:none; background:transparent; color:var(--text-muted); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:12px; opacity:0.75; z-index:2; }
+  .etf-picker-reopen:hover{ opacity:1; background:var(--surface-2); }
   .weight-field{ position:relative; }
   .weight-field input{ font-family:"IBM Plex Mono",monospace; font-size:13.5px; padding:9px 22px 9px 10px;
     border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); width:100%;
@@ -154,6 +180,7 @@
   .banner{ border-radius:10px; padding:12px 16px; font-size:13px; line-height:1.5; margin-top:16px; display:none; }
   .banner.warn{ background:rgba(250,178,25,0.14); border:1px solid rgba(250,178,25,0.4); color:var(--text-1); }
   .banner.err{ background:rgba(208,59,59,0.12); border:1px solid rgba(208,59,59,0.4); color:var(--text-1); }
+  .banner.good{ background:rgba(12,163,12,0.12); border:1px solid rgba(12,163,12,0.35); color:var(--text-1); }
 
   #reportArea{ display:none; }
   #reportArea.visible{ display:block; }
@@ -172,6 +199,45 @@
   .comp-item .lbl{ font-size:13.5px; font-weight:500; color:var(--text-1); line-height:1.35; }
   .comp-item .sub{ font-size:12px; color:var(--text-muted); font-family:"IBM Plex Mono",monospace; margin-top:2px; }
 
+  .geo-highlight{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:14px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:14px; padding:20px 22px; margin-bottom:22px; }
+  .geo-highlight-main{ min-width:230px; }
+  .geo-highlight-title{ font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:.06em; color:var(--text-muted); font-weight:500; }
+  .geo-highlight-msg{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .geo-highlight-msg svg{ width:28px; height:28px; flex:none; }
+  .geo-highlight-msg .txt{ font-family:"Sora",sans-serif; font-size:19px; font-weight:700; color:var(--text-1); }
+  .geo-highlight-sub{ margin-top:6px; font-size:13px; color:var(--text-2); }
+  .geo-quality-pill{ font-size:11.5px; font-weight:600; padding:5px 12px; border-radius:999px; white-space:nowrap; flex:none; }
+  .geo-quality-pill.good{ background:rgba(12,163,12,0.14); border:1px solid rgba(12,163,12,0.35); color:var(--good-ink); }
+  .geo-quality-pill.warn{ background:rgba(250,178,25,0.16); border:1px solid rgba(250,178,25,0.4); color:var(--warning); }
+  .geo-quality-pill.bad{ background:rgba(208,59,59,0.14); border:1px solid rgba(208,59,59,0.35); color:var(--critical); }
+
+  .geo-bar-seg{ position:relative; }
+  .geo-bar-pct{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; font-weight:600; color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,0.3); pointer-events:none; }
+
+  #geoLegend{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:18px; }
+  @media (max-width:600px){ #geoLegend{ grid-template-columns:1fr; } }
+  .geo-cell{ display:flex; flex-direction:column; gap:10px; padding:14px 14px 12px; border:1px solid var(--border);
+    border-radius:12px; transition:background .12s, border-color .12s; }
+  .geo-cell.has-detail{ cursor:pointer; }
+  .geo-cell.has-detail:hover{ background:var(--surface-2); border-color:var(--text-muted); }
+  .geo-cell-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .geo-cell-icon{ width:26px; height:26px; flex:none; }
+  .geo-chev{ color:var(--text-muted); font-size:12px; transition:transform .15s; flex:none; margin-top:4px; }
+  .geo-cell.open .geo-chev{ transform:rotate(90deg); }
+  .geo-cell-name{ font-size:13.5px; font-weight:600; color:var(--text-1); line-height:1.3; }
+  .geo-cell-pct{ font-size:12.5px; color:var(--text-muted); font-family:"IBM Plex Mono",monospace; margin-top:2px; }
+
+  .geo-zone-detail{ display:none; grid-column:1/-1; padding:12px 16px; border:1px solid var(--border);
+    border-radius:12px; background:var(--surface-2); }
+  .geo-zone-detail.open{ display:block; }
+  .geo-detail-item{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-2); padding:4px 0; }
+  .geo-detail-item .swatch{ width:8px; height:8px; margin-top:0; }
+  .geo-detail-item .amt{ margin-left:auto; font-family:"IBM Plex Mono",monospace; color:var(--text-muted); }
+
   table{ width:100%; border-collapse:collapse; font-size:13.5px; }
   th{ text-align:right; font-weight:500; color:var(--text-muted); font-size:11.5px; text-transform:uppercase;
     letter-spacing:.04em; padding:0 10px 10px; border-bottom:1px solid var(--border); }
@@ -186,9 +252,9 @@
   @media (max-width:600px){ .tiles{ grid-template-columns:1fr; } }
   .tile{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px 24px; box-shadow:var(--shadow); }
   .tile .tag{ font-family:"IBM Plex Mono",monospace; font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; font-weight:500; }
-  .tile.good .tag{ color:var(--good-ink); } .tile.bad .tag{ color:var(--critical); }
+  .tile.good .tag{ color:var(--good-ink); } .tile.bad .tag{ color:var(--critical); } .tile.warn .tag{ color:var(--warning); }
   .tile .value{ font-family:"Sora",sans-serif; font-weight:700; font-size:clamp(28px,5vw,38px); margin:8px 0 6px; letter-spacing:-0.01em; }
-  .tile.good .value{ color:var(--good-ink); } .tile.bad .value{ color:var(--critical); }
+  .tile.good .value{ color:var(--good-ink); } .tile.bad .value{ color:var(--critical); } .tile.warn .value{ color:var(--warning); }
   .tile .period{ font-size:13px; color:var(--text-2); }
   .tile .period b{ color:var(--text-1); font-weight:600; }
 
@@ -299,6 +365,8 @@
   .auth-link-btn{ background:none; border:none; color:var(--accent); font-family:inherit; font-size:inherit;
     cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:2px; }
   .auth-link-btn.muted{ color:var(--text-muted); }
+  .theme-toggle-btn{ text-decoration:none; font-size:15px; line-height:1; opacity:0.85; }
+  .theme-toggle-btn:hover{ opacity:1; }
 
   /* auth modal */
   .modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,0.5); display:none; align-items:center;
@@ -314,11 +382,71 @@
   .modal-field input{ width:100%; font-family:"IBM Plex Sans",sans-serif; font-size:14px; padding:10px 11px;
     border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); }
   .modal-error{ color:var(--critical); font-size:12.5px; margin:0 0 12px; display:none; }
+  .modal-info{ color:var(--good-ink); font-size:12.5px; margin:0 0 12px; display:none; }
+  .modal-forgot-link{ text-align:right; margin:-8px 0 14px; }
+  .modal-forgot-link button{ font-size:12px; }
   .modal-actions{ display:flex; flex-direction:column; gap:10px; margin-top:6px; }
   .modal-switch{ text-align:center; font-size:12.5px; color:var(--text-muted); margin-top:16px; }
   .modal-close{ position:absolute; top:16px; right:16px; background:none; border:none; color:var(--text-muted);
     font-size:20px; cursor:pointer; line-height:1; }
   .modal-box{ position:relative; }
+
+  /* ETF picker modal */
+  .picker-box{ max-width:920px; max-height:88vh; display:flex; flex-direction:column; padding:24px 24px 20px; }
+  .picker-search-row{ display:flex; align-items:center; gap:12px; margin:4px 0 14px; }
+  .picker-search{ flex:1; font-family:"IBM Plex Sans",sans-serif; font-size:14.5px; padding:11px 14px;
+    border-radius:9px; border:1px solid var(--border); background:var(--page); color:var(--text-1); }
+  .picker-count{ font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--text-muted); white-space:nowrap; }
+  .picker-filters{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 14px; margin-bottom:14px;
+    padding-bottom:14px; border-bottom:1px solid var(--border); }
+  .picker-filter-group{ display:flex; flex-direction:column; gap:4px; }
+  .picker-filter-label{ font-family:"IBM Plex Mono",monospace; font-size:10px; text-transform:uppercase;
+    letter-spacing:.05em; color:var(--text-muted); }
+  .picker-select{ font-family:"IBM Plex Sans",sans-serif; font-size:12.5px; padding:7px 8px; border-radius:7px;
+    border:1px solid var(--border); background:var(--page); color:var(--text-1); max-width:170px; }
+  .picker-toggle{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-2);
+    cursor:pointer; padding-bottom:1px; }
+  .picker-toggle input{ accent-color:var(--accent); width:15px; height:15px; }
+  .picker-reset{ font-family:"IBM Plex Sans",sans-serif; font-size:12px; color:var(--text-muted); background:none;
+    border:none; text-decoration:underline; text-underline-offset:2px; cursor:pointer; padding-bottom:2px; margin-left:auto; }
+  .picker-reset:hover{ color:var(--text-1); }
+  .picker-table-wrap{ overflow:auto; flex:1; min-height:0; border:1px solid var(--border); border-radius:10px; }
+  .picker-table{ width:100%; border-collapse:collapse; font-size:12.5px; table-layout:fixed; }
+  .col-name{ width:36%; } .col-cat{ width:16%; } .col-return{ width:9%; } .col-vol{ width:8%; }
+  .col-sharpe{ width:8%; } .col-sortino{ width:8%; } .col-years{ width:8%; } .col-fee{ width:7%; }
+  .picker-table thead th{ position:sticky; top:0; background:var(--surface-2); text-align:right; font-weight:500;
+    color:var(--text-muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; padding:9px 10px;
+    border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; z-index:1; }
+  .picker-table thead th:first-child{ text-align:left; cursor:default; }
+  .picker-table thead th.sorted{ color:var(--text-1); }
+  .picker-table thead th .arr{ opacity:0.5; font-size:9px; margin-left:2px; }
+  .picker-table thead th.sorted .arr{ opacity:1; }
+  .picker-table td{ padding:9px 10px; border-bottom:1px solid var(--border); text-align:right;
+    font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .picker-table tbody tr{ cursor:pointer; }
+  .picker-table tbody tr:last-child td{ border-bottom:none; }
+  .picker-table tbody tr:hover td{ background:var(--surface-2); }
+  .picker-table tbody tr.current td{ background:var(--s1-a2); }
+  .picker-table td.name{ text-align:left; font-family:"IBM Plex Sans",sans-serif; overflow:hidden; }
+  .picker-etf-name{ display:flex; align-items:baseline; gap:7px; min-width:0; }
+  .picker-etf-name .tk{ font-weight:600; color:var(--text-1); flex:none; }
+  .picker-etf-name .nm{ color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1 1 auto; }
+  .mini-badge{ font-family:"IBM Plex Mono",monospace; font-size:10px; padding:1.5px 6px; border-radius:5px;
+    border:1px solid var(--border); color:var(--text-muted); white-space:nowrap; flex:none; }
+  .mini-badge.pea{ border-color:rgba(12,163,12,0.4); color:var(--good-ink); background:rgba(12,163,12,0.1); }
+  .picker-empty{ padding:32px 16px; text-align:center; color:var(--text-muted); font-size:13.5px; }
+  .picker-footer{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-top:16px; }
+  .picker-disclaimer{ font-size:11px; color:var(--text-muted); margin:0; flex-basis:100%; }
+  @media (max-width:700px){
+    .picker-hide-sm{ display:none; }
+    .picker-box{ padding:20px 16px 16px; max-height:92vh; }
+    .picker-select{ max-width:130px; }
+    /* hiding a th/td doesn't free its column's reserved width in a fixed
+       table layout - the <col> itself must be hidden too, and the
+       remaining visible columns' widths redistributed to fill the gap */
+    .col-name{ width:46%; } .col-return{ width:20%; } .col-vol{ width:17%; } .col-fee{ width:17%; }
+  }
 
   /* saved portfolios */
   .saved-portfolios-row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
@@ -328,85 +456,170 @@
   .save-inline-form.open{ display:flex; }
   .save-inline-form input{ flex:1; font-family:"IBM Plex Sans",sans-serif; font-size:13.5px; padding:9px 10px;
     border-radius:8px; border:1px solid var(--border); background:var(--page); color:var(--text-1); }
+
+  .print-only{ display:none; }
+
+  @media print{
+    @page{ margin:14mm 12mm; }
+    /* :not([data-theme="light"]) matches specificity with, and comes after,
+       both the prefers-color-scheme(dark) rule and the [data-theme="dark"]
+       rule above, so this reliably wins and forces the light palette for
+       print regardless of the viewer's theme (it also harmlessly matches —
+       with identical values — the plain light-default case). */
+    :root:not([data-theme="light"]){
+      --page:#ffffff; --surface:#ffffff; --surface-2:#f6f5f1;
+      --text-1:#111111; --text-2:#3a3936; --text-muted:#6b6a65;
+      --border:#d7d5cd; --grid:#e6e4dc; --baseline:#bdbbb2;
+      --good:#0ca30c; --good-ink:#0a7a0a; --critical:#b3352f; --warning:#8a5a00; --accent:#7a5200;
+    }
+    *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    body{ background:#fff !important; color:var(--text-1) !important; font-size:10.5pt; }
+    .wrap{ max-width:100% !important; padding:0 !important; }
+
+    /* screen-only chrome: forms, nav, auth, loading state, anything interactive-only */
+    .auth-bar, #emailVerifyBanner, #siteNoticeBanner, #builder, #saved-portfolios, #projection-inputs, .loading-overlay, .tab-bar,
+    .comp-toggle, .builder-footer, .apply-weights-btn, .row-remove,
+    #optimizeBtn, #optDeviationInput, .footer-fields, .asset-filter,
+    .geo-chev, .eyebrow, h1, .lede, .screen-only, .print-hide{ display:none !important; }
+
+    .print-only{ display:block; }
+    .print-header{ margin-bottom:26px; padding-bottom:14px; border-bottom:3px solid var(--text-1); }
+    .print-header-title{ font-family:"Sora",sans-serif; font-weight:700; font-size:21pt; color:var(--text-1); }
+    .print-header-meta{ margin-top:8px; font-family:"IBM Plex Mono",monospace; font-size:9.5pt; color:var(--text-2); }
+    .print-header-summary{ margin-top:5px; font-weight:600; color:var(--text-1); font-size:11pt; }
+
+    h2{ font-size:14.5pt; border-left:4px solid var(--text-1); padding-left:10px; break-after:avoid; }
+    .section-sub{ break-after:avoid; }
+    /* keep a section's heading attached to its content: without this, a
+       heading that still fits at the bottom of a page gets left there on its
+       own while its (too-tall-for-the-remaining-space) card jumps to the next
+       page — break-after:avoid on the heading alone is too weak a hint to
+       stop that. break-inside:avoid on the whole section pushes the pair
+       together instead. */
+    section{ margin-bottom:20px; break-inside:avoid; }
+    .card, .tile, .mc-tile, .chart-card, .resilience-card, tr{
+      box-shadow:none !important; border:1px solid #cfcdc5 !important;
+      break-inside:avoid; page-break-inside:avoid;
+    }
+    .comp-legend, .geo-highlight, .geo-cell{ break-inside:avoid; }
+
+    /* a well-diversified portfolio (many zones) or a large asset table can
+       genuinely run longer than one page — forcing the whole section/card to
+       stay together like the (reliably short) ones above is impossible to
+       satisfy and produces a half-empty page instead. Let these flow across
+       a page break; their own repeating units (.geo-cell, tr) already avoid
+       splitting individually, so the break still lands somewhere sensible. */
+    #geo-exposure, #geo-exposure .card,
+    #comparison .card, #optimization .card, #correlation .card{
+      break-inside:auto; page-break-inside:auto;
+    }
+    /* CSS grid fragments unpredictably across a print page break in Chrome
+       (it tends to reserve a whole extra row's worth of blank space rather
+       than cut cleanly between items) — fall back to a plain block list for
+       the zone legend specifically, so each zone stacks and paginates like
+       any other block instead */
+    #geoLegend{ display:block; }
+    .geo-cell{ margin-bottom:10px; }
+
+    /* the click-to-expand country detail can't work on paper — force it open
+       and drop the now-inaccurate "click a zone" instruction */
+    .geo-zone-detail{ display:block !important; }
+
+    /* scroll containers don't exist on paper — let wide tables render at
+       full width instead of being silently clipped */
+    [style*="overflow-x:auto"]{ overflow:visible !important; }
+    table{ font-size:9.5pt; }
+    .corr-table{ font-size:8.5pt; }
+
+    a{ color:inherit !important; text-decoration:none !important; }
+    .tooltip{ display:none !important; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div class="auth-bar" id="authBar"></div>
+  <div class="print-header print-only">
+    <div class="print-header-title" data-fr="Rapport de simulation de portefeuille" data-en="Portfolio simulation report">Rapport de simulation de portefeuille</div>
+    <div class="print-header-meta" id="printReportMeta"></div>
+  </div>
 
-  <p class="eyebrow">Simulateur de portefeuille</p>
-  <h1>Construisez votre portefeuille d'ETF et testez-le</h1>
-  <p class="lede">Choisissez vos ETF et leurs pondérations, puis lancez le calcul&nbsp;: rendements réels recalculés, meilleure/pire performance sur une fenêtre glissante (backtest + Monte&nbsp;Carlo), performance annuelle historique, et projection sur N années.</p>
+  <div class="auth-bar">
+    <button class="auth-link-btn muted theme-toggle-btn" id="themeToggleBtn" type="button"></button>
+    <button class="auth-link-btn muted" id="pdfExportBtn" type="button"></button>
+    <button class="auth-link-btn muted" id="langToggleBtn" type="button"></button>
+    <span id="authBar" style="display:flex; align-items:center; gap:12px;"></span>
+  </div>
+  <div class="banner warn" id="emailVerifyBanner" style="margin-top:0 0 16px;">
+    <span data-fr="Vérifiez votre adresse email pour sécuriser votre compte." data-en="Verify your email address to secure your account.">Vérifiez votre adresse email pour sécuriser votre compte.</span>
+    <button class="auth-link-btn" id="resendVerificationBtn" type="button" style="margin-left:8px;" data-fr="Renvoyer l'email" data-en="Resend email">Renvoyer l'email</button>
+  </div>
+  <div class="banner" id="siteNoticeBanner" style="margin-top:0 0 16px;"></div>
+
+  <p class="eyebrow" data-fr="Simulateur de portefeuille" data-en="Portfolio simulator">Simulateur de portefeuille</p>
+  <h1 data-fr="Construisez votre portefeuille d'ETF et testez-le" data-en="Build your ETF portfolio and test it">Construisez votre portefeuille d'ETF et testez-le</h1>
+  <p class="lede" data-fr-html="Choisissez vos ETF et leurs pondérations, puis lancez le calcul&nbsp;: rendements réels recalculés, meilleure/pire performance sur une fenêtre glissante (backtest + Monte&nbsp;Carlo), performance annuelle historique, et projection sur N années." data-en-html="Choose your ETFs and their weights, then run the calculation&nbsp;: recalculated real returns, best/worst rolling-window performance (backtest + Monte&nbsp;Carlo), historical annual performance, and an N-year projection.">Choisissez vos ETF et leurs pondérations, puis lancez le calcul&nbsp;: rendements réels recalculés, meilleure/pire performance sur une fenêtre glissante (backtest + Monte&nbsp;Carlo), performance annuelle historique, et projection sur N années.</p>
 
   <div class="tab-bar">
-    <button class="tab-btn active" data-tab="simulator" type="button">Simulateur</button>
-    <button class="tab-btn" data-tab="projection" type="button">Projection d'épargne</button>
+    <button class="tab-btn active" data-tab="simulator" type="button" data-fr="Simulateur" data-en="Simulator">Simulateur</button>
+    <button class="tab-btn" data-tab="projection" type="button" data-fr="Projection d'épargne" data-en="Savings projection">Projection d'épargne</button>
   </div>
 
   <div id="tab-simulator" class="tab-panel active">
 
   <section id="saved-portfolios" style="display:none;">
-    <h2>Mes portefeuilles</h2>
-    <p class="section-sub">Enregistrés sur votre compte — accessibles depuis n'importe quel appareil</p>
+    <h2 data-fr="Mes portefeuilles" data-en="My portfolios">Mes portefeuilles</h2>
+    <p class="section-sub" data-fr="Enregistrés sur votre compte — accessibles depuis n'importe quel appareil" data-en="Saved to your account — accessible from any device">Enregistrés sur votre compte — accessibles depuis n'importe quel appareil</p>
     <div class="card">
       <div class="saved-portfolios-row">
-        <select id="savedPortfoliosSelect"><option value="">— aucun portefeuille enregistré —</option></select>
-        <button class="add-row-btn" id="loadSavedBtn" type="button">Charger</button>
-        <button class="add-row-btn" id="deleteSavedBtn" type="button">Supprimer</button>
-        <button class="update-btn" id="showSaveFormBtn" type="button">Enregistrer le portefeuille actuel</button>
+        <select id="savedPortfoliosSelect"><option value="" data-fr="— aucun portefeuille enregistré —" data-en="— no saved portfolio —">— aucun portefeuille enregistré —</option></select>
+        <button class="add-row-btn" id="loadSavedBtn" type="button" data-fr="Charger" data-en="Load">Charger</button>
+        <button class="add-row-btn" id="deleteSavedBtn" type="button" data-fr="Supprimer" data-en="Delete">Supprimer</button>
+        <button class="update-btn" id="showSaveFormBtn" type="button" data-fr="Enregistrer le portefeuille actuel" data-en="Save current portfolio">Enregistrer le portefeuille actuel</button>
       </div>
       <div class="save-inline-form" id="saveInlineForm">
-        <input type="text" id="savePortfolioName" placeholder="Nom du portefeuille (ex : Momentum + Or)" maxlength="120">
-        <button class="update-btn" id="confirmSaveBtn" type="button">Enregistrer</button>
-        <button class="add-row-btn" id="cancelSaveBtn" type="button">Annuler</button>
+        <input type="text" id="savePortfolioName" placeholder="Nom du portefeuille (ex : Momentum + Or)" data-fr-placeholder="Nom du portefeuille (ex : Momentum + Or)" data-en-placeholder="Portfolio name (e.g. Momentum + Gold)" maxlength="120">
+        <button class="update-btn" id="confirmSaveBtn" type="button" data-fr="Enregistrer" data-en="Save">Enregistrer</button>
+        <button class="add-row-btn" id="cancelSaveBtn" type="button" data-fr="Annuler" data-en="Cancel">Annuler</button>
       </div>
       <p class="chart-note" id="savedPortfoliosNote" style="margin-top:10px;"></p>
     </div>
   </section>
 
   <section id="builder">
-    <h2>Portefeuille</h2>
-    <p class="section-sub">Toutes les pondérations sont normalisées à 100&nbsp;% automatiquement</p>
+    <h2 data-fr="Portefeuille" data-en="Portfolio">Portefeuille</h2>
+    <p class="section-sub" data-fr-html="Toutes les pondérations sont normalisées à 100&nbsp;% automatiquement" data-en-html="All weights are automatically normalized to 100&nbsp;%">Toutes les pondérations sont normalisées à 100&nbsp;% automatiquement</p>
     <div class="card">
-      <div class="sort-control">
-        <span class="sort-label">Trier les ETF :</span>
-        <button class="sort-btn active" data-sort="alpha" type="button">Alphabétique</button>
-        <button class="sort-btn" data-sort="vol" type="button">Volatilité ↑</button>
-        <button class="sort-btn" data-sort="perf" type="button">Performance ↓</button>
-        <span class="sort-status" id="sortStatus"></span>
-      </div>
-      <p class="sort-note">Rendement/volatilité affichés par ETF isolé, sur ses 10 dernières années (ou son historique complet si l'ETF est plus récent — durée indiquée entre parenthèses) — à titre de repère pour trier. Une fois le portefeuille calculé, le tableau "Rendement &amp; volatilité recalculés" ci-dessous utilise plutôt la période commune exacte de tous les actifs sélectionnés, donc les deux chiffres pour un même ETF peuvent différer.</p>
       <div class="port-row-header">
-        <div class="col-label">ETF</div>
-        <div class="col-label">Poids</div>
-        <div class="col-label">Frais (TER)</div>
+        <div class="col-label" data-fr="ETF" data-en="ETF">ETF</div>
+        <div class="col-label" data-fr="Poids" data-en="Weight">Poids</div>
+        <div class="col-label" data-fr="Frais (TER)" data-en="Fee (TER)">Frais (TER)</div>
         <div></div>
       </div>
       <div class="builder-rows" id="builderRows"></div>
       <div class="builder-actions">
-        <button class="add-row-btn" id="addRowBtn" type="button">+ Ajouter une ligne</button>
+        <button class="add-row-btn" id="addRowBtn" type="button" data-fr="+ Ajouter une ligne" data-en="+ Add a row">+ Ajouter une ligne</button>
         <div class="weight-total" id="weightTotal"></div>
       </div>
       <div class="builder-footer">
         <div class="footer-fields">
           <div class="num-field">
-            <label for="windowInput">Fenêtre glissante (mois)</label>
+            <label for="windowInput" data-fr="Fenêtre glissante (mois)" data-en="Rolling window (months)">Fenêtre glissante (mois)</label>
             <input type="number" id="windowInput" min="1" max="24" value="6">
           </div>
           <div class="num-field">
-            <label for="yearsInput">Horizon Monte&nbsp;Carlo (N ans)</label>
+            <label for="yearsInput" data-fr-html="Horizon Monte&nbsp;Carlo (N ans)" data-en-html="Monte&nbsp;Carlo horizon (N years)">Horizon Monte&nbsp;Carlo (N ans)</label>
             <input type="number" id="yearsInput" min="1" max="50" value="15">
           </div>
           <div class="rebalance-field">
             <div class="rebalance-toggle">
               <input type="checkbox" id="annualRebalanceInput">
-              <label for="annualRebalanceInput">Réallocation annuelle</label>
+              <label for="annualRebalanceInput" data-fr="Réallocation annuelle" data-en="Annual rebalancing">Réallocation annuelle</label>
             </div>
-            <div class="field-hint">Sinon, rééquilibrage mensuel (poids cibles réappliqués chaque mois).</div>
+            <div class="field-hint" data-fr="Sinon, rééquilibrage mensuel (poids cibles réappliqués chaque mois)." data-en="Otherwise, monthly rebalancing (target weights reapplied every month).">Sinon, rééquilibrage mensuel (poids cibles réappliqués chaque mois).</div>
           </div>
         </div>
-        <button class="update-btn" id="updateBtn" type="button">Mettre à jour le rapport</button>
+        <button class="update-btn" id="updateBtn" type="button" data-fr="Mettre à jour le rapport" data-en="Update report">Mettre à jour le rapport</button>
       </div>
       <div class="banner warn" id="warnBanner"></div>
       <div class="banner err" id="errBanner"></div>
@@ -414,18 +627,18 @@
   </section>
 
   <div class="loading-overlay" id="loadingOverlay" style="display:none;">
-    <div class="spinner"></div> Récupération des données de marché et calcul en cours…
+    <div class="spinner"></div> <span data-fr="Récupération des données de marché et calcul en cours…" data-en="Fetching market data and computing…">Récupération des données de marché et calcul en cours…</span>
   </div>
 
   <div id="reportArea">
 
     <section id="composition">
-      <h2>Composition</h2>
-      <p class="section-sub">Pondérations effectives (normalisées)</p>
+      <h2 data-fr="Composition" data-en="Composition">Composition</h2>
+      <p class="section-sub" data-fr-html="Pondérations effectives (normalisées)" data-en-html="Effective weights (normalized)">Pondérations effectives (normalisées)</p>
       <div class="card">
         <div class="comp-toggle">
-          <button class="sort-btn active" data-view="bar" type="button">Barres</button>
-          <button class="sort-btn" data-view="pie" type="button">Camembert</button>
+          <button class="sort-btn active" data-view="bar" type="button" data-fr="Barres" data-en="Bars">Barres</button>
+          <button class="sort-btn" data-view="pie" type="button" data-fr="Camembert" data-en="Pie chart">Camembert</button>
         </div>
         <div class="comp-bar" id="compBar"></div>
         <div class="comp-pie-wrap chart-wrap" id="compPieWrap" style="display:none;">
@@ -436,17 +649,32 @@
       </div>
     </section>
 
+    <section id="geo-exposure">
+      <h2 data-fr="Exposition géographique" data-en="Geographic exposure">Exposition géographique</h2>
+      <p class="section-sub screen-only" data-fr="Grandes zones mutuellement exclusives (aucun chevauchement) — cliquez une zone pour le détail par pays" data-en="Mutually exclusive macro-zones (no overlap) — click a zone for the country breakdown">Grandes zones mutuellement exclusives (aucun chevauchement) — cliquez une zone pour le détail par pays</p>
+      <p class="section-sub print-only" data-fr="Grandes zones mutuellement exclusives (aucun chevauchement) — détail par pays ci-dessous" data-en="Mutually exclusive macro-zones (no overlap) — country breakdown below">Grandes zones mutuellement exclusives (aucun chevauchement) — détail par pays ci-dessous</p>
+      <div class="card">
+        <div id="geoHeadline"></div>
+        <div class="chart-wrap">
+          <div class="comp-bar" id="geoBar"></div>
+          <div class="tooltip" id="geoBarTooltip"></div>
+        </div>
+        <div class="comp-legend" id="geoLegend"></div>
+        <p class="chart-note" id="geoNote" style="margin-top:14px;"></p>
+      </div>
+    </section>
+
     <section id="comparison">
-      <h2>Rendement &amp; volatilité recalculés</h2>
+      <h2 data-fr-html="Rendement &amp; volatilité recalculés" data-en-html="Recalculated return &amp; volatility">Rendement &amp; volatilité recalculés</h2>
       <p class="section-sub" id="comparisonSub"></p>
       <div class="card">
         <table>
           <thead><tr>
-            <th>Actif</th>
-            <th class="sortable-th" data-sort-key="weight">Poids<span class="sort-arrow"></span></th>
-            <th class="sortable-th" data-sort-key="return">Rendement annualisé<span class="sort-arrow"></span></th>
-            <th class="sortable-th" data-sort-key="vol">Volatilité annualisée<span class="sort-arrow"></span></th>
-            <th class="sortable-th" data-sort-key="fee">Frais (TER)<span class="sort-arrow"></span></th>
+            <th data-fr="Actif" data-en="Asset">Actif</th>
+            <th class="sortable-th" data-sort-key="weight" data-fr="Poids" data-en="Weight">Poids<span class="sort-arrow"></span></th>
+            <th class="sortable-th" data-sort-key="return" data-fr="Rendement annualisé" data-en="Annualized return">Rendement annualisé<span class="sort-arrow"></span></th>
+            <th class="sortable-th" data-sort-key="vol" data-fr="Volatilité annualisée" data-en="Annualized volatility">Volatilité annualisée<span class="sort-arrow"></span></th>
+            <th class="sortable-th" data-sort-key="fee" data-fr="Frais (TER)" data-en="Fee (TER)">Frais (TER)<span class="sort-arrow"></span></th>
           </tr></thead>
           <tbody id="compTableBody"></tbody>
         </table>
@@ -454,45 +682,50 @@
     </section>
 
     <section id="optimization">
-      <h2>Optimisation du portefeuille</h2>
-      <p class="section-sub">Pour les mêmes actifs, quelles pondérations auraient minimisé le risque ou maximisé le rendement ajusté du risque, historiquement</p>
+      <h2 data-fr="Optimisation du portefeuille" data-en="Portfolio optimization">Optimisation du portefeuille</h2>
+      <p class="section-sub" data-fr="Pour les mêmes actifs, quelles pondérations auraient minimisé le risque ou maximisé le rendement ajusté du risque, historiquement" data-en="For the same assets, which weights would historically have minimized risk or maximized risk-adjusted return">Pour les mêmes actifs, quelles pondérations auraient minimisé le risque ou maximisé le rendement ajusté du risque, historiquement</p>
       <div class="card">
         <div class="footer-fields" style="margin-bottom:16px;">
           <div class="num-field">
-            <label for="optDeviationInput">Écart max. par actif (points de %)</label>
+            <label for="optDeviationInput" data-fr="Écart max. par actif (points de %)" data-en="Max deviation per asset (points of %)">Écart max. par actif (points de %)</label>
             <input type="number" id="optDeviationInput" min="1" max="100" step="1" value="15">
           </div>
         </div>
-        <button class="update-btn" id="optimizeBtn" type="button" style="margin-bottom:4px;">Calculer les pondérations optimales</button>
+        <button class="update-btn" id="optimizeBtn" type="button" style="margin-bottom:4px;" data-fr="Calculer les pondérations optimales" data-en="Calculate optimal weights">Calculer les pondérations optimales</button>
         <p class="chart-note" id="optimizeNote" style="margin-top:10px;"></p>
         <div id="optimizeResult" style="display:none; margin-top:18px;">
           <div class="callout period-mismatch-callout" id="periodMismatchCallout" style="display:none; margin-bottom:18px; border-color:var(--warning);">
-            <p class="callout-title" style="color:var(--warning);">⚠ Période différente du rapport principal</p>
+            <p class="callout-title" style="color:var(--warning);" data-fr="⚠ Période différente du rapport principal" data-en="⚠ Different period from the main report">⚠ Période différente du rapport principal</p>
             <p id="periodMismatchText"></p>
           </div>
           <div style="overflow-x:auto;">
             <table id="optimizeTable">
-              <thead><tr><th>Actif</th><th>Actuel</th><th>Variance minimale</th><th>Sharpe maximal</th></tr></thead>
+              <thead><tr>
+                <th data-fr="Actif" data-en="Asset">Actif</th>
+                <th data-fr="Actuel" data-en="Current">Actuel</th>
+                <th data-fr="Variance minimale" data-en="Minimum variance">Variance minimale</th>
+                <th data-fr="Sharpe maximal" data-en="Maximum Sharpe">Sharpe maximal</th>
+              </tr></thead>
               <tbody id="optimizeTableBody"></tbody>
             </table>
           </div>
           <div class="mc-summary" style="margin-top:18px; grid-template-columns:repeat(3,1fr);">
             <div class="mc-tile neutral">
-              <div class="tag" id="optCurrentTag">Portefeuille actuel — stats</div>
+              <div class="tag" id="optCurrentTag" data-fr="Portefeuille actuel — stats" data-en="Current portfolio — stats">Portefeuille actuel — stats</div>
               <div class="rng" id="optCurrentStats"></div>
               <div class="extra" id="optCurrentExtra"></div>
             </div>
             <div class="mc-tile neutral">
-              <div class="tag">Variance minimale — stats</div>
+              <div class="tag" data-fr="Variance minimale — stats" data-en="Minimum variance — stats">Variance minimale — stats</div>
               <div class="rng" id="optMinVarStats"></div>
               <div class="extra" id="optMinVarExtra"></div>
-              <button class="add-row-btn apply-weights-btn" data-strategy="min_variance" type="button">Appliquer ces poids</button>
+              <button class="add-row-btn apply-weights-btn" data-strategy="min_variance" type="button" data-fr="Appliquer ces poids" data-en="Apply these weights">Appliquer ces poids</button>
             </div>
             <div class="mc-tile neutral">
-              <div class="tag">Sharpe maximal — stats</div>
+              <div class="tag" data-fr="Sharpe maximal — stats" data-en="Maximum Sharpe — stats">Sharpe maximal — stats</div>
               <div class="rng" id="optMaxSharpeStats"></div>
               <div class="extra" id="optMaxSharpeExtra"></div>
-              <button class="add-row-btn apply-weights-btn" data-strategy="max_sharpe" type="button">Appliquer ces poids</button>
+              <button class="add-row-btn apply-weights-btn" data-strategy="max_sharpe" type="button" data-fr="Appliquer ces poids" data-en="Apply these weights">Appliquer ces poids</button>
             </div>
           </div>
         </div>
@@ -500,24 +733,24 @@
     </section>
 
     <section id="risk-metrics">
-      <h2>Métriques de risque</h2>
+      <h2 data-fr="Métriques de risque" data-en="Risk metrics">Métriques de risque</h2>
       <p class="section-sub" id="riskMetricsSub"></p>
       <div class="card">
         <div style="overflow-x:auto;">
           <table>
             <thead><tr>
-              <th>Actif</th><th>Sharpe</th><th>Sortino</th><th>Max drawdown</th><th>VaR 95% (mens.)</th><th>CVaR 95% (mens.)</th>
+              <th data-fr="Actif" data-en="Asset">Actif</th><th>Sharpe</th><th>Sortino</th><th data-fr="Max drawdown" data-en="Max drawdown">Max drawdown</th><th>VaR 95% (mens.)</th><th>CVaR 95% (mens.)</th>
             </tr></thead>
             <tbody id="riskTableBody"></tbody>
           </table>
         </div>
-        <p class="chart-note" style="margin-top:14px;">Sharpe/Sortino calculés avec un taux sans risque de 2&nbsp;%/an. VaR/CVaR 95&nbsp;% : perte mensuelle typique et moyenne des pires 5&nbsp;% de mois observés historiquement.</p>
+        <p class="chart-note" style="margin-top:14px;" data-fr-html="Sharpe/Sortino calculés avec un taux sans risque de 2&nbsp;%/an. VaR/CVaR 95&nbsp;% : perte mensuelle typique et moyenne des pires 5&nbsp;% de mois observés historiquement." data-en-html="Sharpe/Sortino computed with a 2&nbsp;%/yr risk-free rate. VaR/CVaR 95&nbsp;%: typical monthly loss and average of the worst 5&nbsp;% of historically observed months.">Sharpe/Sortino calculés avec un taux sans risque de 2&nbsp;%/an. VaR/CVaR 95&nbsp;% : perte mensuelle typique et moyenne des pires 5&nbsp;% de mois observés historiquement.</p>
       </div>
     </section>
 
     <section id="resilience">
-      <h2>Résilience &amp; résistance aux crises</h2>
-      <p class="section-sub">Score composite heuristique (pas une mesure scientifique absolue) — détail du calcul ci-dessous</p>
+      <h2 data-fr-html="Résilience &amp; résistance aux crises" data-en-html="Resilience &amp; crisis resistance">Résilience &amp; résistance aux crises</h2>
+      <p class="section-sub" data-fr="Score composite heuristique (pas une mesure scientifique absolue) — détail du calcul ci-dessous" data-en="Heuristic composite score (not an absolute scientific measure) — calculation detail below">Score composite heuristique (pas une mesure scientifique absolue) — détail du calcul ci-dessous</p>
       <div class="card resilience-card">
         <div class="resilience-score-block">
           <div class="resilience-score-value" id="resilienceScoreValue">—</div>
@@ -526,10 +759,14 @@
         <div class="resilience-components" id="resilienceComponents"></div>
       </div>
       <div class="card" style="margin-top:16px;">
-        <p class="chart-title" style="margin-bottom:12px;">Performance lors de crises historiques</p>
+        <p class="chart-title" style="margin-bottom:12px;" data-fr="Performance lors de crises historiques" data-en="Performance during historical crises">Performance lors de crises historiques</p>
         <div style="overflow-x:auto;">
           <table>
-            <thead><tr><th>Crise</th><th>Période</th><th>Portefeuille</th></tr></thead>
+            <thead><tr>
+              <th data-fr="Crise" data-en="Crisis">Crise</th>
+              <th data-fr="Période" data-en="Period">Période</th>
+              <th data-fr="Portefeuille" data-en="Portfolio">Portefeuille</th>
+            </tr></thead>
             <tbody id="crisisTableBody"></tbody>
           </table>
         </div>
@@ -542,11 +779,11 @@
       <p class="section-sub" id="backtestSub"></p>
       <div class="asset-filter" id="assetFilter"></div>
       <div class="callout coverage-callout" id="coverageCallout" style="display:none; margin-bottom:22px;">
-        <p class="callout-title">Couverture partielle en début de période</p>
+        <p class="callout-title" data-fr="Couverture partielle en début de période" data-en="Partial coverage early in the period">Couverture partielle en début de période</p>
         <p id="coverageCalloutText"></p>
       </div>
       <div class="callout annual-rebalance-callout" id="annualRebalanceCallout" style="display:none; margin-bottom:22px; border-color:var(--warning);">
-        <p class="callout-title" style="color:var(--warning);">⚠ Actif(s) exclu(s) de la réallocation annuelle</p>
+        <p class="callout-title" style="color:var(--warning);" data-fr="⚠ Actif(s) exclu(s) de la réallocation annuelle" data-en="⚠ Asset(s) excluded from annual rebalancing">⚠ Actif(s) exclu(s) de la réallocation annuelle</p>
         <p id="annualRebalanceCalloutText"></p>
       </div>
       <div class="tiles">
@@ -571,7 +808,7 @@
       </div>
       <div class="chart-card">
         <p class="chart-title" id="annualChartTitle">Performance annuelle historique du portefeuille</p>
-        <p class="chart-note" id="annualNote">Rendement composé de chaque année civile — années incomplètes ou à couverture partielle (un actif absent) affichées en teinte atténuée, détail au survol</p>
+        <p class="chart-note" id="annualNote" data-fr="Rendement composé de chaque année civile — années incomplètes ou à couverture partielle (un actif absent) affichées en teinte atténuée, détail au survol" data-en="Compounded return for each calendar year — incomplete or partially-covered years (a missing asset) shown in a lighter shade, hover for detail">Rendement composé de chaque année civile — années incomplètes ou à couverture partielle (un actif absent) affichées en teinte atténuée, détail au survol</p>
         <div class="chart-wrap">
           <svg id="annualChart" viewBox="0 0 860 240" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="tooltip" id="annualTooltip"></div>
@@ -580,7 +817,7 @@
     </section>
 
     <section id="correlation">
-      <h2>Corrélations entre actifs</h2>
+      <h2 data-fr="Corrélations entre actifs" data-en="Correlations between assets">Corrélations entre actifs</h2>
       <p class="section-sub" id="corrSub"></p>
       <div class="card">
         <div style="overflow-x:auto;"><table class="corr-table" id="corrTable"></table></div>
@@ -590,7 +827,7 @@
     <section id="mcUnavailableSection" style="display:none;">
       <h2>Monte&nbsp;Carlo</h2>
       <div class="callout">
-        <p class="callout-title">Simulation indisponible</p>
+        <p class="callout-title" data-fr="Simulation indisponible" data-en="Simulation unavailable">Simulation indisponible</p>
         <p id="mcUnavailableText"></p>
       </div>
     </section>
@@ -631,24 +868,24 @@
     </section>
 
     <section id="montecarlo-nyear">
-      <h2>Monte&nbsp;Carlo — performance sur N ans</h2>
+      <h2 data-fr-html="Monte&nbsp;Carlo — performance sur N ans" data-en-html="Monte&nbsp;Carlo — N-year performance">Monte&nbsp;Carlo — performance sur N ans</h2>
       <p class="section-sub" id="mcNSub"></p>
 
       <div class="mc-summary">
         <div class="mc-tile neutral">
-          <div class="tag">Rendement total sur la période — distribution</div>
+          <div class="tag" data-fr="Rendement total sur la période — distribution" data-en="Total return over the period — distribution">Rendement total sur la période — distribution</div>
           <div class="rng" id="mcTotalRange"></div>
           <div class="extra" id="mcTotalExtra"></div>
         </div>
         <div class="mc-tile neutral">
-          <div class="tag">Rendement annualisé (CAGR) — distribution</div>
+          <div class="tag" data-fr="Rendement annualisé (CAGR) — distribution" data-en="Annualized return (CAGR) — distribution">Rendement annualisé (CAGR) — distribution</div>
           <div class="rng" id="mcCagrRange"></div>
           <div class="extra" id="mcCagrExtra"></div>
         </div>
       </div>
 
       <div class="chart-card">
-        <p class="chart-title">Valeur d'un investissement de 100&nbsp;€</p>
+        <p class="chart-title" data-fr-html="Valeur d'un investissement de 100&nbsp;€" data-en-html="Value of a 100&nbsp;€ investment">Valeur d'un investissement de 100&nbsp;€</p>
         <p class="chart-note" id="fanNote"></p>
         <div class="chart-wrap">
           <svg id="fanChart" viewBox="0 0 860 320" preserveAspectRatio="xMidYMid meet"></svg>
@@ -658,9 +895,9 @@
     </section>
 
     <footer>
-      <p><b>Méthodologie —</b> les prix mensuels sont récupérés depuis Yahoo Finance pour chaque ETF sélectionné. Les actifs non libellés en EUR sont convertis via le taux de change EUR/devise historique mensuel, pour refléter le point de vue d'un investisseur en euros. Un décalage de 12h est appliqué aux horodatages avant de les regrouper par mois, pour éviter les erreurs d'attribution de mois dues aux fuseaux horaires (GMT/BST notamment).</p>
-      <p><b>Monte Carlo —</b> les simulations rééchantillonnent par blocs (de la même longueur que la fenêtre glissante choisie) les rendements mensuels réels observés sur la période commune (tous actifs ensemble, donc corrélations préservées), sans supposer de distribution normale.</p>
-      <p><b>Limites —</b> les performances passées ne préjugent pas des performances futures. Ceci est un outil d'analyse, pas un conseil en investissement.</p>
+      <p><b data-fr="Méthodologie —" data-en="Methodology —">Méthodologie —</b> <span data-fr="les prix mensuels sont récupérés depuis Yahoo Finance pour chaque ETF sélectionné. Les actifs non libellés en EUR sont convertis via le taux de change EUR/devise historique mensuel, pour refléter le point de vue d'un investisseur en euros. Un décalage de 12h est appliqué aux horodatages avant de les regrouper par mois, pour éviter les erreurs d'attribution de mois dues aux fuseaux horaires (GMT/BST notamment)." data-en="monthly prices are fetched from Yahoo Finance for each selected ETF. Assets not denominated in EUR are converted using the historical monthly EUR/currency exchange rate, to reflect a euro-based investor's viewpoint. A 12h buffer is applied to timestamps before grouping them by month, to avoid month-attribution errors caused by timezones (GMT/BST in particular).">les prix mensuels sont récupérés depuis Yahoo Finance pour chaque ETF sélectionné. Les actifs non libellés en EUR sont convertis via le taux de change EUR/devise historique mensuel, pour refléter le point de vue d'un investisseur en euros. Un décalage de 12h est appliqué aux horodatages avant de les regrouper par mois, pour éviter les erreurs d'attribution de mois dues aux fuseaux horaires (GMT/BST notamment).</span></p>
+      <p><b data-fr="Monte Carlo —" data-en="Monte Carlo —">Monte Carlo —</b> <span data-fr="les simulations rééchantillonnent par blocs (de la même longueur que la fenêtre glissante choisie) les rendements mensuels réels observés sur la période commune (tous actifs ensemble, donc corrélations préservées), sans supposer de distribution normale." data-en="the simulations resample, in blocks (the same length as the chosen rolling window), the real monthly returns observed over the common period (all assets together, so correlations are preserved), without assuming a normal distribution.">les simulations rééchantillonnent par blocs (de la même longueur que la fenêtre glissante choisie) les rendements mensuels réels observés sur la période commune (tous actifs ensemble, donc corrélations préservées), sans supposer de distribution normale.</span></p>
+      <p><b data-fr="Limites —" data-en="Limitations —">Limites —</b> <span data-fr="les performances passées ne préjugent pas des performances futures. Ceci est un outil d'analyse, pas un conseil en investissement." data-en="past performance is not indicative of future results. This is an analysis tool, not investment advice.">les performances passées ne préjugent pas des performances futures. Ceci est un outil d'analyse, pas un conseil en investissement.</span></p>
     </footer>
 
   </div>
@@ -668,77 +905,77 @@
 
   <div id="tab-projection" class="tab-panel">
     <section id="projection-inputs">
-      <h2>Projection d'épargne programmée</h2>
-      <p class="section-sub">Simule l'évolution du portefeuille défini dans l'onglet Simulateur avec des versements réguliers</p>
+      <h2 data-fr="Projection d'épargne programmée" data-en="Scheduled savings projection">Projection d'épargne programmée</h2>
+      <p class="section-sub" data-fr="Simule l'évolution du portefeuille défini dans l'onglet Simulateur avec des versements réguliers" data-en="Simulates the evolution of the portfolio defined in the Simulator tab with regular contributions">Simule l'évolution du portefeuille défini dans l'onglet Simulateur avec des versements réguliers</p>
       <div class="card">
         <div class="proj-grid">
           <div class="num-field">
-            <label for="projInitialInput">Capital initial (€)</label>
+            <label for="projInitialInput" data-fr="Capital initial (€)" data-en="Initial capital (€)">Capital initial (€)</label>
             <input type="number" id="projInitialInput" min="0" step="100" value="10000">
           </div>
           <div class="num-field">
-            <label for="projMonthlyInput">Versement mensuel (€)</label>
+            <label for="projMonthlyInput" data-fr="Versement mensuel (€)" data-en="Monthly contribution (€)">Versement mensuel (€)</label>
             <input type="number" id="projMonthlyInput" min="0" step="10" value="200">
           </div>
           <div class="num-field">
-            <label for="projYearsInput">Durée (années)</label>
+            <label for="projYearsInput" data-fr="Durée (années)" data-en="Duration (years)">Durée (années)</label>
             <input type="number" id="projYearsInput" min="1" max="60" value="20">
           </div>
           <div class="num-field">
-            <label for="projStepUpInput">Hausse annuelle du versement (%)</label>
+            <label for="projStepUpInput" data-fr="Hausse annuelle du versement (%)" data-en="Annual contribution increase (%)">Hausse annuelle du versement (%)</label>
             <input type="number" id="projStepUpInput" min="0" max="20" step="0.1" value="2.0">
           </div>
           <div class="num-field">
-            <label for="projReturnInput">Rendement annuel hypothétique (%)</label>
+            <label for="projReturnInput" data-fr="Rendement annuel hypothétique (%)" data-en="Assumed annual return (%)">Rendement annuel hypothétique (%)</label>
             <input type="number" id="projReturnInput" step="0.1" value="0">
           </div>
           <div class="num-field">
-            <label for="projTaxInput">Fiscalité — imposition sur les gains (%)</label>
+            <label for="projTaxInput" data-fr="Fiscalité — imposition sur les gains (%)" data-en="Tax — tax on gains (%)">Fiscalité — imposition sur les gains (%)</label>
             <input type="number" id="projTaxInput" min="0" max="100" step="1" value="0">
           </div>
         </div>
         <p class="chart-note" id="projAssumptionNote" style="margin-top:14px;"></p>
-        <button class="update-btn" id="projCalcBtn" type="button" style="margin-top:10px;">Calculer la projection</button>
+        <button class="update-btn" id="projCalcBtn" type="button" style="margin-top:10px;" data-fr="Calculer la projection" data-en="Calculate projection">Calculer la projection</button>
       </div>
     </section>
 
     <section id="projection-results">
       <div class="tiles" style="grid-template-columns:repeat(4,1fr);">
         <div class="tile">
-          <div class="tag">Total versé</div>
+          <div class="tag" data-fr="Total versé" data-en="Total contributed">Total versé</div>
           <div class="value" id="projTotalContributed" style="font-size:22px;"></div>
         </div>
         <div class="tile good">
-          <div class="tag">Capital final (nominal)</div>
+          <div class="tag" data-fr="Capital final (nominal)" data-en="Final capital (nominal)">Capital final (nominal)</div>
           <div class="value" id="projFinalNominal" style="font-size:22px;"></div>
         </div>
         <div class="tile neutral-tile">
-          <div class="tag">Capital final (pouvoir d'achat actuel)</div>
+          <div class="tag" data-fr="Capital final (pouvoir d'achat actuel)" data-en="Final capital (current purchasing power)">Capital final (pouvoir d'achat actuel)</div>
           <div class="value" id="projFinalReal" style="font-size:22px;"></div>
         </div>
         <div class="tile good">
-          <div class="tag">Plus-value totale</div>
+          <div class="tag" data-fr="Plus-value totale" data-en="Total gain">Plus-value totale</div>
           <div class="value" id="projGain" style="font-size:22px;"></div>
         </div>
       </div>
 
       <div class="chart-card">
-        <p class="chart-title">Évolution du capital — nominal vs. pouvoir d'achat constant</p>
+        <p class="chart-title" data-fr="Évolution du capital — nominal vs. pouvoir d'achat constant" data-en="Capital growth — nominal vs. constant purchasing power">Évolution du capital — nominal vs. pouvoir d'achat constant</p>
         <p class="chart-note" id="projChartNote"></p>
         <div class="chart-wrap">
           <svg id="projChart" viewBox="0 0 860 340" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="tooltip" id="projTooltip"></div>
         </div>
         <div class="proj-legend">
-          <span><span class="dot" style="background:var(--s1)"></span>Capital nominal (€ courants)</span>
-          <span><span class="dot" style="background:var(--text-muted)"></span>Capital réel (€ constants, déflaté du taux ci-dessus)</span>
+          <span><span class="dot" style="background:var(--s1)"></span><span data-fr="Capital nominal (€ courants)" data-en="Nominal capital (current €)">Capital nominal (€ courants)</span></span>
+          <span><span class="dot" style="background:var(--text-muted)"></span><span data-fr="Capital réel (€ constants, déflaté du taux ci-dessus)" data-en="Real capital (constant €, deflated by the rate above)">Capital réel (€ constants, déflaté du taux ci-dessus)</span></span>
         </div>
       </div>
     </section>
 
     <footer>
-      <p><b>Méthode —</b> projection déterministe (une seule trajectoire, pas de Monte Carlo) : le rendement annuel hypothétique est composé mensuellement, net de frais si repris de l'onglet Simulateur. Le versement mensuel augmente chaque année du taux indiqué (par défaut, une hypothèse d'inflation moyenne). La courbe "pouvoir d'achat" déflate le capital nominal par ce même taux, en supposant qu'il reflète l'inflation réelle. La fiscalité, si non nulle, réduit le rendement net appliqué chaque mois (simplification : imposition au fil de l'eau plutôt qu'au dénouement).</p>
-      <p><b>Limites —</b> une seule hypothèse de rendement constant ne reflète pas la variabilité réelle des marchés (voir la simulation Monte Carlo de l'onglet Simulateur pour une fourchette). Ceci est un outil d'analyse, pas un conseil en investissement ou fiscal.</p>
+      <p><b data-fr="Méthode —" data-en="Method —">Méthode —</b> <span data-fr="projection déterministe (une seule trajectoire, pas de Monte Carlo) : le rendement annuel hypothétique est composé mensuellement, net de frais si repris de l'onglet Simulateur. Le versement mensuel augmente chaque année du taux indiqué (par défaut, une hypothèse d'inflation moyenne). La courbe &quot;pouvoir d'achat&quot; déflate le capital nominal par ce même taux, en supposant qu'il reflète l'inflation réelle. La fiscalité, si non nulle, réduit le rendement net appliqué chaque mois (simplification : imposition au fil de l'eau plutôt qu'au dénouement)." data-en="deterministic projection (a single path, no Monte Carlo): the assumed annual return compounds monthly, net of fees if carried over from the Simulator tab. The monthly contribution increases each year by the stated rate (by default, an average-inflation assumption). The &quot;purchasing power&quot; curve deflates the nominal capital by that same rate, assuming it reflects real inflation. Taxes, if non-zero, reduce the net return applied each month (a simplification: taxed as accrued rather than on realization).">projection déterministe (une seule trajectoire, pas de Monte Carlo) : le rendement annuel hypothétique est composé mensuellement, net de frais si repris de l'onglet Simulateur. Le versement mensuel augmente chaque année du taux indiqué (par défaut, une hypothèse d'inflation moyenne). La courbe "pouvoir d'achat" déflate le capital nominal par ce même taux, en supposant qu'il reflète l'inflation réelle. La fiscalité, si non nulle, réduit le rendement net appliqué chaque mois (simplification : imposition au fil de l'eau plutôt qu'au dénouement).</span></p>
+      <p><b data-fr="Limites —" data-en="Limitations —">Limites —</b> <span data-fr="une seule hypothèse de rendement constant ne reflète pas la variabilité réelle des marchés (voir la simulation Monte Carlo de l'onglet Simulateur pour une fourchette). Ceci est un outil d'analyse, pas un conseil en investissement ou fiscal." data-en="a single constant-return assumption doesn't reflect real market variability (see the Simulator tab's Monte Carlo simulation for a range). This is an analysis tool, not investment or tax advice.">une seule hypothèse de rendement constant ne reflète pas la variabilité réelle des marchés (voir la simulation Monte Carlo de l'onglet Simulateur pour une fourchette). Ceci est un outil d'analyse, pas un conseil en investissement ou fiscal.</span></p>
     </footer>
   </div>
 
@@ -748,43 +985,276 @@
   <div class="modal-box">
     <button class="modal-close" id="authModalClose" type="button">×</button>
     <h3 id="authModalTitle">Se connecter</h3>
-    <p class="modal-sub" id="authModalSub">Accédez à vos portefeuilles enregistrés</p>
+    <p class="modal-sub" id="authModalSub" data-fr="Accédez à vos portefeuilles enregistrés" data-en="Access your saved portfolios">Accédez à vos portefeuilles enregistrés</p>
     <p class="modal-error" id="authModalError"></p>
-    <div class="modal-field">
+    <p class="modal-info" id="authModalInfo"></p>
+    <div class="modal-field" id="authEmailField">
       <label for="authEmailInput">Email</label>
       <input type="email" id="authEmailInput" autocomplete="email">
     </div>
-    <div class="modal-field">
-      <label for="authPasswordInput">Mot de passe</label>
+    <div class="modal-field" id="authPasswordField">
+      <label for="authPasswordInput" id="authPasswordLabel" data-fr="Mot de passe" data-en="Password">Mot de passe</label>
       <input type="password" id="authPasswordInput" autocomplete="current-password">
     </div>
+    <div class="modal-field" id="authPasswordConfirmField">
+      <label for="authPasswordConfirmInput" data-fr="Confirmer le mot de passe" data-en="Confirm password">Confirmer le mot de passe</label>
+      <input type="password" id="authPasswordConfirmInput" autocomplete="new-password">
+    </div>
+    <p class="modal-forgot-link screen-only" id="authForgotLinkWrap">
+      <button class="auth-link-btn muted" id="authForgotBtn" type="button" data-fr="Mot de passe oublié ?" data-en="Forgot password?">Mot de passe oublié ?</button>
+    </p>
     <div class="modal-actions">
       <button class="update-btn" id="authSubmitBtn" type="button">Se connecter</button>
     </div>
     <p class="modal-switch">
-      <span id="authSwitchPrompt">Pas encore de compte ?</span>
+      <span id="authSwitchPrompt" data-fr="Pas encore de compte ?" data-en="No account yet?">Pas encore de compte ?</span>
       <button class="auth-link-btn" id="authSwitchBtn" type="button">Créer un compte</button>
     </p>
   </div>
 </div>
 
+<div class="modal-overlay" id="etfPickerOverlay">
+  <div class="modal-box picker-box">
+    <button class="modal-close" id="etfPickerClose" type="button">×</button>
+    <h3 data-fr="Choisir un ETF" data-en="Choose an ETF">Choisir un ETF</h3>
+    <div class="picker-search-row">
+      <input type="text" id="pickerSearch" class="picker-search" data-fr-placeholder="Rechercher un ticker ou un nom…" data-en-placeholder="Search a ticker or name…" placeholder="Rechercher un ticker ou un nom…">
+      <span class="picker-count" id="pickerCount"></span>
+    </div>
+    <div class="picker-filters">
+      <div class="picker-filter-group">
+        <span class="picker-filter-label" data-fr="Catégorie" data-en="Category">Catégorie</span>
+        <select class="picker-select" id="pickerCategorySelect"></select>
+      </div>
+      <div class="picker-filter-group">
+        <span class="picker-filter-label" data-fr="Zone géographique" data-en="Geographic zone">Zone géographique</span>
+        <select class="picker-select" id="pickerZoneSelect"></select>
+      </div>
+      <div class="picker-filter-group">
+        <span class="picker-filter-label" data-fr="Devise" data-en="Currency">Devise</span>
+        <select class="picker-select" id="pickerCurrencySelect"></select>
+      </div>
+      <div class="picker-filter-group">
+        <span class="picker-filter-label" data-fr="Distribution" data-en="Distribution">Distribution</span>
+        <select class="picker-select" id="pickerDistSelect"></select>
+      </div>
+      <div class="picker-filter-group">
+        <span class="picker-filter-label" data-fr="Ancienneté min." data-en="Min. history">Ancienneté min.</span>
+        <select class="picker-select" id="pickerYearsSelect"></select>
+      </div>
+      <label class="picker-toggle">
+        <input type="checkbox" id="pickerPeaToggle">
+        <span data-fr="Éligible PEA" data-en="PEA-eligible">Éligible PEA</span>
+      </label>
+      <button type="button" class="picker-reset" id="pickerResetBtn" data-fr="Réinitialiser les filtres" data-en="Reset filters">Réinitialiser les filtres</button>
+    </div>
+    <div class="picker-table-wrap">
+      <table class="picker-table">
+        <colgroup>
+          <col class="col-name"><col class="col-cat picker-hide-sm"><col class="col-return"><col class="col-vol">
+          <col class="col-sharpe picker-hide-sm"><col class="col-sortino picker-hide-sm"><col class="col-years picker-hide-sm"><col class="col-fee">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="ticker" data-fr="ETF" data-en="ETF">ETF</th>
+            <th data-sort="category" class="picker-hide-sm" data-fr="Catégorie" data-en="Category">Catégorie</th>
+            <th data-sort="ann_return" data-fr="Rendement" data-en="Return">Rendement</th>
+            <th data-sort="ann_vol" data-fr="Vol." data-en="Vol.">Vol.</th>
+            <th data-sort="sharpe" class="picker-hide-sm" data-fr="Sharpe" data-en="Sharpe">Sharpe</th>
+            <th data-sort="sortino" class="picker-hide-sm" data-fr="Sortino" data-en="Sortino">Sortino</th>
+            <th data-sort="years" class="picker-hide-sm" data-fr="Historique" data-en="History">Historique</th>
+            <th data-sort="ter" data-fr="Frais" data-en="Fee">Frais</th>
+          </tr>
+        </thead>
+        <tbody id="pickerTableBody"></tbody>
+      </table>
+      <p class="picker-empty" id="pickerEmpty" style="display:none;" data-fr="Aucun ETF ne correspond à ces filtres." data-en="No ETF matches these filters.">Aucun ETF ne correspond à ces filtres.</p>
+    </div>
+    <div class="picker-footer">
+      <button type="button" class="add-row-btn" id="pickerCustomBtn" data-fr="Saisir un ticker manuellement…" data-en="Enter a ticker manually…">Saisir un ticker manuellement…</button>
+      <button type="button" class="add-row-btn" id="pickerSyntheticBtn" data-fr="➕ Fonds euro / actif personnalisé…" data-en="➕ Custom fixed-rate fund/asset…">➕ Fonds euro / actif personnalisé…</button>
+      <p class="picker-disclaimer" id="pickerDisclaimer"></p>
+    </div>
+  </div>
+</div>
+
 <script>
+/* ---------------- i18n (fr default, en toggle) ---------------- */
+const LANG_KEY = 'portfolioSimulator.lang.v1';
+let LANG = (localStorage.getItem(LANG_KEY) === 'en') ? 'en' : 'fr';
+
+function _t(fr, en){ return LANG === 'en' ? en : fr; }
+
+function applyStaticI18n(){
+  document.querySelectorAll('[data-fr]').forEach(el=>{
+    el.textContent = LANG === 'en' ? (el.dataset.en || el.dataset.fr) : el.dataset.fr;
+  });
+  document.querySelectorAll('[data-fr-html]').forEach(el=>{
+    el.innerHTML = LANG === 'en' ? (el.dataset.enHtml || el.dataset.frHtml) : el.dataset.frHtml;
+  });
+  document.querySelectorAll('[data-fr-placeholder]').forEach(el=>{
+    el.placeholder = LANG === 'en' ? (el.dataset.enPlaceholder || el.dataset.frPlaceholder) : el.dataset.frPlaceholder;
+  });
+  document.documentElement.lang = LANG;
+  const btn = document.getElementById('langToggleBtn');
+  if (btn) btn.textContent = LANG === 'en' ? 'FR' : 'EN';
+  const pdfBtn = document.getElementById('pdfExportBtn');
+  if (pdfBtn) pdfBtn.textContent = _t('Exporter en PDF', 'Export to PDF');
+  applyThemeButtonLabel();
+}
+
+/* ---------------- dark mode toggle ---------------- */
+const THEME_KEY = 'portfolioSimulator.theme.v1';
+const prefersDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function currentEffectiveTheme(){
+  const override = document.documentElement.getAttribute('data-theme');
+  if (override === 'light' || override === 'dark') return override;
+  return prefersDarkQuery.matches ? 'dark' : 'light';
+}
+
+function applyThemeButtonLabel(){
+  const btn = document.getElementById('themeToggleBtn');
+  if (!btn) return;
+  const isDark = currentEffectiveTheme() === 'dark';
+  btn.textContent = isDark ? '☀️' : '🌙';
+  btn.title = isDark ? _t('Passer en mode clair','Switch to light mode') : _t('Passer en mode sombre','Switch to dark mode');
+}
+
+function setupThemeToggle(){
+  applyThemeButtonLabel();
+  document.getElementById('themeToggleBtn').addEventListener('click', ()=>{
+    const next = currentEffectiveTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    applyThemeButtonLabel();
+  });
+  // if the user hasn't set an explicit override, keep the icon in sync with
+  // live OS-level theme changes
+  prefersDarkQuery.addEventListener('change', ()=>{
+    if (!localStorage.getItem(THEME_KEY)) applyThemeButtonLabel();
+  });
+}
+
+function setupLangAndExport(){
+  applyStaticI18n();
+  setupThemeToggle();
+  document.getElementById('langToggleBtn').addEventListener('click', ()=>{
+    LANG = LANG === 'en' ? 'fr' : 'en';
+    localStorage.setItem(LANG_KEY, LANG);
+    applyStaticI18n();
+    refreshAllSelectOptions();
+    populatePickerFilterSelects();
+    updatePickerDisclaimer();
+    renderAuthBar();
+    if (document.getElementById('authModalOverlay').classList.contains('open')) openAuthModal(AUTH_MODE);
+    if (LAST_REPORT_DATA) renderReport(LAST_REPORT_DATA);
+    if (LAST_OPTIMIZE_RESULT) renderOptimizationResult(LAST_OPTIMIZE_RESULT);
+    if (document.getElementById('projTotalContributed').textContent) runProjection();
+  });
+  document.getElementById('pdfExportBtn').addEventListener('click', exportPdf);
+}
+
+async function exportPdf(){
+  const btn = document.getElementById('pdfExportBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = _t('Génération du PDF…','Generating PDF…');
+  try {
+    updatePrintHeader();
+    // a report shouldn't show an empty, boxed-off "Optimization" section if
+    // the user never actually ran it — hide the whole section for print in
+    // that case rather than just its (already print-hidden) button/inputs.
+    document.getElementById('optimization').classList.toggle(
+      'print-hide', document.getElementById('optimizeResult').style.display !== 'block');
+
+    // snapshot the fully-rendered page as static markup (no scripts) and let
+    // the server print it with a real browser engine — this is what makes
+    // "Export en PDF" hand back an actual downloaded file instead of opening
+    // the OS print dialog (which a webpage can never do on its own: only the
+    // browser itself is allowed to write files without a user-facing prompt)
+    const clone = document.documentElement.cloneNode(true);
+    clone.querySelectorAll('script').forEach(s => s.remove());
+    const html = '<!doctype html>' + clone.outerHTML;
+
+    const res = await fetch('/api/render-pdf', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({html}),
+    });
+    if (!res.ok){
+      const err = await res.json().catch(()=>({detail:_t('Erreur inconnue','Unknown error')}));
+      throw new Error(err.detail || _t('Erreur inconnue','Unknown error'));
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'rapport-portefeuille.pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(_t('Échec de la génération du PDF : ','PDF generation failed: ') + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+function updatePrintHeader(){
+  const el = document.getElementById('printReportMeta');
+  if (!el) return;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString(LANG === 'en' ? 'en-GB' : 'fr-FR', {year:'numeric', month:'long', day:'numeric'});
+  let html = `<div>${_t('Généré le','Generated on')} ${dateStr}</div>`;
+  if (LAST_REPORT_DATA){
+    const data = LAST_REPORT_DATA;
+    const pr = data.risk_metrics && data.risk_metrics.portfolio;
+    const parts = [
+      `${data.used_tickers.length} ${_t('actifs','assets')}`,
+      `${fmtPct(data.portfolio.ann_return,1)} ${_t('/an','/yr')}`,
+      `vol ${fmtNum(data.portfolio.ann_vol,1)}%`,
+    ];
+    if (pr) parts.push(`Sharpe ${fmtRatio(pr.sharpe)}`);
+    if (data.resilience) parts.push(`${_t('Résilience','Resilience')} ${Math.round(data.resilience.score)}/100`);
+    html += `<div class="print-header-summary">${parts.join(' · ')}</div>`;
+  }
+  el.innerHTML = html;
+}
+
 const ASSET_COLORS = ['var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)'];
+const ZONE_COLORS = ['var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)','var(--s6)','var(--s7)','var(--s8)','var(--s9)'];
+const NON_GEO_ZONES = ['Matieres premieres', 'Fonds a taux fixe', 'Non classe'];
 const ETF_NAMES = {};
 const ETF_FEES = {};
+const ETF_GEO = {};
+let ETF_META = {};
+let ETF_META_SCRAPED_AT = null;
+let GEO_REGIONS_ORDER = [];
+let GEO_ZONES_ORDER = [];
+let GEO_ZONE_OF = {};
 let DEFAULT_TER = 0.20;
 let CURRENT_CATEGORIES = [];
 let ETF_STATS = {};
-let SORT_MODE = 'alpha';
 let currentOptionsHTML = '';
 let LAST_REPORT_DATA = null;
 let COMPOSITION_VIEW = 'bar';
 let BACKTEST_FILTER = 'portfolio';
 
-function fmtPct(v, digits=1){ return (v>0?'+':'') + v.toFixed(digits).replace('.',',') + ' %'; }
+/* ---------------- ETF picker modal: search, filter, sort ---------------- */
+let PICKER_ROW = null;
+let PICKER_SORT = {key:'ticker', dir:'asc'};
+const PICKER_FILTERS = {query:'', category:'', zone:'', currency:'', distribution:'', minYears:0, peaOnly:false};
+const _zoneCache = {};
+
+function fmtNum(v, digits){ return LANG==='en' ? v.toFixed(digits) : v.toFixed(digits).replace('.',','); }
+function fmtPct(v, digits=1){ return (v>0?'+':'') + fmtNum(v, digits) + ' %'; }
 function fmtMonthPeriod(p){
   const [y,m] = p.split('-');
-  const mois = ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  const moisFr = ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  const moisEn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mois = LANG === 'en' ? moisEn : moisFr;
   return mois[parseInt(m,10)-1] + ' ' + y;
 }
 function colorFor(i){ return ASSET_COLORS[i % ASSET_COLORS.length]; }
@@ -805,38 +1275,11 @@ function statFor(ticker){
 
 function fmtYears(y){
   const rounded = Math.round(y);
-  return Math.abs(y-rounded) < 0.05 ? String(rounded) : y.toFixed(1).replace('.',',');
+  return Math.abs(y-rounded) < 0.05 ? String(rounded) : fmtNum(y, 1);
 }
 
-function optionLabel(e){
-  const s = statFor(e.ticker);
-  const base = `${e.ticker} — ${e.name}`;
-  if (!s) return base;
-  return `${base} · ${fmtPct(s.ann_return,1)}/an · vol ${s.ann_vol.toFixed(1).replace('.',',')}% (${fmtYears(s.years)} ans)`;
-}
-
-function sortedCategories(){
-  const cats = CURRENT_CATEGORIES.map(cat=>{
-    const etfs = [...cat.etfs];
-    if (SORT_MODE === 'alpha'){
-      etfs.sort((a,b)=> a.ticker.localeCompare(b.ticker));
-    } else if (SORT_MODE === 'vol'){
-      etfs.sort((a,b)=>{
-        const sa = statFor(a.ticker), sb = statFor(b.ticker);
-        if (!sa && !sb) return a.ticker.localeCompare(b.ticker);
-        if (!sa) return 1; if (!sb) return -1;
-        return sa.ann_vol - sb.ann_vol;
-      });
-    } else if (SORT_MODE === 'perf'){
-      etfs.sort((a,b)=>{
-        const sa = statFor(a.ticker), sb = statFor(b.ticker);
-        if (!sa && !sb) return a.ticker.localeCompare(b.ticker);
-        if (!sa) return 1; if (!sb) return -1;
-        return sb.ann_return - sa.ann_return;
-      });
-    }
-    return {...cat, etfs};
-  });
+function allCategoriesWithCustom(){
+  const cats = CURRENT_CATEGORIES.map(cat=>({...cat, etfs:[...cat.etfs].sort((a,b)=>a.ticker.localeCompare(b.ticker))}));
   if (CUSTOM_TICKERS.length) cats.push({name: 'Ajoutés récemment', etfs: [...CUSTOM_TICKERS].reverse()});
   return cats;
 }
@@ -862,18 +1305,45 @@ function registerCustomTicker(ticker, name, stats){
   if (ETF_NAMES[ticker]) return; // already a catalogue ticker or previously added
   CUSTOM_TICKERS.push({ticker, name, stats: stats || null});
   ETF_NAMES[ticker] = name;
+  ETF_GEO[ticker] = {'Non classe': 100};
   saveCustomTickersToStorage();
 }
 
+const CATEGORY_LABELS_EN = {
+  'Actions US - large cap': 'US Equities - large cap',
+  'Actions US - facteurs / styles': 'US Equities - factors / styles',
+  'Actions US - secteurs': 'US Equities - sectors',
+  'Actions Monde': 'World Equities',
+  'Actions internationales - large': 'International Equities - broad',
+  'Actions Europe': 'European Equities',
+  'Actions Asie': 'Asian Equities',
+  'Actions par pays - Ameriques / Oceanie': 'Equities by country - Americas / Oceania',
+  'Thematique - Robotique & IA': 'Thematic - Robotics & AI',
+  'Thematique - Tech & Innovation': 'Thematic - Tech & Innovation',
+  'Thematique - Energie renouvelable': 'Thematic - Renewable energy',
+  'Thematique - Eau': 'Thematic - Water',
+  'Thematique - Vehicules electriques & Batteries': 'Thematic - Electric vehicles & Batteries',
+  'Thematique - Sante & Pharma': 'Thematic - Health & Pharma',
+  'Thematique - Defense': 'Thematic - Defense',
+  'Thematique - Aerospatial & Spatial': 'Thematic - Aerospace & Space',
+  "Obligations d'Etat par pays (notation de credit)": 'Government bonds by country (credit rating)',
+  'Obligations': 'Bonds',
+  'Matieres premieres / Metaux precieux': 'Commodities / Precious metals',
+  'Immobilier': 'Real Estate',
+  'Ajoutés récemment': 'Recently added',
+};
+function trCategory(name){ return LANG === 'en' ? (CATEGORY_LABELS_EN[name] || name) : name; }
+
 function rebuildOptionsHTML(){
-  let html = '<option value="">— choisir un ETF —</option>';
-  sortedCategories().forEach(cat=>{
-    html += `<optgroup label="${cat.name}">`;
-    cat.etfs.forEach(e=>{ html += `<option value="${e.ticker}">${optionLabel(e)}</option>`; });
-    html += '</optgroup>';
+  // the <select> itself is now just a hidden state-holder (see .etf-select
+  // {display:none}) driving the visible picker button/modal, so this no
+  // longer needs pretty stat-suffixed labels or category optgroups
+  let html = `<option value="">${_t('— choisir un ETF —','— choose an ETF —')}</option>`;
+  allCategoriesWithCustom().forEach(cat=>{
+    cat.etfs.forEach(e=>{ html += `<option value="${e.ticker}">${e.ticker} — ${e.name}</option>`; });
   });
-  html += '<option value="__custom__">Autre (saisir un ticker)…</option>';
-  html += '<option value="__synthetic__">➕ Fonds euro / actif à taux personnalisé…</option>';
+  html += `<option value="__custom__">${_t('Autre (saisir un ticker)…','Other (enter a ticker)…')}</option>`;
+  html += `<option value="__synthetic__">➕ ${_t('Fonds euro / actif à taux personnalisé…','Custom fixed-rate fund / asset…')}</option>`;
   currentOptionsHTML = html;
 }
 
@@ -884,33 +1354,15 @@ function refreshAllSelectOptions(){
     select.innerHTML = currentOptionsHTML;
     select.value = prev;
   });
-}
-
-function setupSortControls(){
-  const volBtn = document.querySelector('.sort-btn[data-sort="vol"]');
-  const perfBtn = document.querySelector('.sort-btn[data-sort="perf"]');
-  volBtn.disabled = true; perfBtn.disabled = true;
-  document.getElementById('sortStatus').textContent = 'Chargement des statistiques…';
-  document.querySelectorAll('.sort-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      if (btn.disabled) return;
-      SORT_MODE = btn.dataset.sort;
-      document.querySelectorAll('.sort-btn').forEach(b=>b.classList.toggle('active', b===btn));
-      refreshAllSelectOptions();
-    });
-  });
+  document.querySelectorAll('#builderRows .port-row').forEach(row=> updateEtfTriggerLabel(row));
+  if (document.getElementById('etfPickerOverlay').classList.contains('open')) renderPickerResults();
 }
 
 function loadEtfStatsInBackground(){
   fetch('/api/etf-stats').then(r=>r.json()).then(payload=>{
     Object.assign(ETF_STATS, payload.stats || {}); // merge, don't clobber custom-ticker stats set earlier
-    document.querySelector('.sort-btn[data-sort="vol"]').disabled = false;
-    document.querySelector('.sort-btn[data-sort="perf"]').disabled = false;
-    document.getElementById('sortStatus').textContent = '';
     refreshAllSelectOptions();
-  }).catch(()=>{
-    document.getElementById('sortStatus').textContent = 'Statistiques indisponibles';
-  });
+  }).catch(()=>{});
 }
 
 /* ---------------- portfolio builder rows ---------------- */
@@ -919,10 +1371,14 @@ function addRow(container, ticker, weight, fee, synthetic){
   row.className = 'port-row';
   const initialFee = fee !== undefined && fee !== null ? fee : (synthetic ? 0 : (ETF_FEES[ticker] !== undefined ? ETF_FEES[ticker] : DEFAULT_TER));
   row.innerHTML = `
-    <select class="etf-select">${currentOptionsHTML}</select>
+    <div class="etf-cell">
+      <select class="etf-select">${currentOptionsHTML}</select>
+      <button type="button" class="etf-picker-trigger"></button>
+      <button type="button" class="etf-picker-reopen" title="${_t('Changer d’ETF','Change ETF')}">🔍</button>
+    </div>
     <div class="weight-field"><input type="number" class="weight-input" min="0" step="1" value="${weight}"><span>%</span></div>
     <div class="fee-field"><input type="number" class="fee-input" min="0" max="10" step="0.01" value="${initialFee}"><span>%</span></div>
-    <button class="row-remove" type="button" title="Supprimer">×</button>`;
+    <button class="row-remove" type="button" title="${_t('Supprimer','Remove')}">×</button>`;
   const select = row.querySelector('.etf-select');
   if (synthetic){
     select.value = '__synthetic__';
@@ -942,14 +1398,288 @@ function addRow(container, ticker, weight, fee, synthetic){
     } else if (select.value && ETF_FEES[select.value] !== undefined){
       row.querySelector('.fee-input').value = ETF_FEES[select.value];
     }
+    updateEtfTriggerLabel(row);
     updateWeightTotal();
   });
+  row.querySelector('.etf-picker-trigger').addEventListener('click', ()=> openEtfPicker(row));
+  row.querySelector('.etf-picker-reopen').addEventListener('click', ()=> openEtfPicker(row));
+  updateEtfTriggerLabel(row);
   row.querySelector('.weight-input').addEventListener('input', updateWeightTotal);
   row.querySelector('.weight-input').addEventListener('change', sortRowsByWeight);
   row.querySelector('.fee-input').addEventListener('input', savePortfolioState);
   row.querySelector('.row-remove').addEventListener('click', ()=>{ row.remove(); updateWeightTotal(); });
   container.appendChild(row);
   updateWeightTotal();
+}
+
+function updateEtfTriggerLabel(row){
+  const select = row.querySelector('.etf-select');
+  const trigger = row.querySelector('.etf-picker-trigger');
+  const reopen = row.querySelector('.etf-picker-reopen');
+  const v = select.value;
+  const isSpecial = v === '__custom__' || v === '__synthetic__';
+  trigger.hidden = isSpecial;
+  reopen.style.display = isSpecial ? 'flex' : 'none';
+  if (isSpecial) return;
+  if (!v){
+    trigger.innerHTML = `<span class="etf-picker-placeholder">${_t('— choisir un ETF —','— choose an ETF —')}</span>`;
+    return;
+  }
+  const name = ETF_NAMES[v] || v;
+  trigger.innerHTML = `<span class="tk">${v}</span><span class="nm">${name}</span>`;
+}
+
+/* ---------------- ETF picker modal ---------------- */
+const PICKER_SORT_DEFAULT_DIR = {
+  ticker:'asc', category:'asc', ann_return:'desc', ann_vol:'asc', sharpe:'desc', sortino:'desc', years:'desc', ter:'asc',
+};
+
+function dominantZone(ticker){
+  if (_zoneCache[ticker] !== undefined) return _zoneCache[ticker];
+  const geo = ETF_GEO[ticker];
+  if (!geo || !Object.keys(geo).length){ _zoneCache[ticker] = null; return null; }
+  const totals = {};
+  Object.keys(geo).forEach(region=>{
+    const zone = GEO_ZONE_OF[region] || 'Non classe';
+    totals[zone] = (totals[zone]||0) + geo[region];
+  });
+  const zone = Object.keys(totals).reduce((a,b)=> totals[a]>=totals[b]?a:b);
+  _zoneCache[ticker] = zone;
+  return zone;
+}
+
+function trDistribution(d){
+  if (d === 'Capitalisant') return _t('Capi','Acc');
+  if (d === 'Distribuant') return 'Dist';
+  return d || '';
+}
+
+function pickerFlatList(){
+  const seen = new Set();
+  const list = [];
+  allCategoriesWithCustom().forEach(cat=>{
+    cat.etfs.forEach(e=>{
+      if (seen.has(e.ticker)) return;
+      seen.add(e.ticker);
+      list.push({ticker: e.ticker, name: e.name, category: cat.name});
+    });
+  });
+  return list;
+}
+
+function pickerCandidates(){
+  const q = PICKER_FILTERS.query.trim().toLowerCase();
+  return pickerFlatList().filter(e=>{
+    if (q && !(e.ticker.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))) return false;
+    if (PICKER_FILTERS.category && e.category !== PICKER_FILTERS.category) return false;
+    if (PICKER_FILTERS.zone && dominantZone(e.ticker) !== PICKER_FILTERS.zone) return false;
+    const meta = ETF_META[e.ticker] || {};
+    if (PICKER_FILTERS.currency && meta.currency !== PICKER_FILTERS.currency) return false;
+    if (PICKER_FILTERS.distribution && meta.distribution !== PICKER_FILTERS.distribution) return false;
+    if (PICKER_FILTERS.peaOnly && !meta.pea) return false;
+    if (PICKER_FILTERS.minYears > 0){
+      const s = statFor(e.ticker);
+      if (!s || s.years < PICKER_FILTERS.minYears) return false;
+    }
+    return true;
+  });
+}
+
+function sortedPickerCandidates(){
+  const list = pickerCandidates();
+  const {key, dir} = PICKER_SORT;
+  const mul = dir === 'asc' ? 1 : -1;
+  list.sort((a,b)=>{
+    if (key === 'ticker') return mul * a.ticker.localeCompare(b.ticker);
+    if (key === 'category') return mul * trCategory(a.category).localeCompare(trCategory(b.category));
+    if (key === 'ter'){
+      const fa = ETF_FEES[a.ticker], fb = ETF_FEES[b.ticker];
+      if (fa === undefined && fb === undefined) return a.ticker.localeCompare(b.ticker);
+      if (fa === undefined) return 1; if (fb === undefined) return -1;
+      return mul * (fa - fb);
+    }
+    const sa = statFor(a.ticker), sb = statFor(b.ticker);
+    const va = sa ? sa[key] : null, vb = sb ? sb[key] : null;
+    if (va === null || va === undefined){ return (vb === null || vb === undefined) ? a.ticker.localeCompare(b.ticker) : 1; }
+    if (vb === null || vb === undefined) return -1;
+    return mul * (va - vb);
+  });
+  return list;
+}
+
+function onPickerSortClick(th){
+  const key = th.dataset.sort;
+  if (PICKER_SORT.key === key){
+    PICKER_SORT.dir = PICKER_SORT.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    PICKER_SORT = {key, dir: PICKER_SORT_DEFAULT_DIR[key] || 'asc'};
+  }
+  renderPickerResults();
+}
+
+function renderPickerResults(){
+  const list = sortedPickerCandidates();
+  const tbody = document.getElementById('pickerTableBody');
+  const empty = document.getElementById('pickerEmpty');
+  const currentTicker = PICKER_ROW ? PICKER_ROW.querySelector('.etf-select').value : null;
+  document.getElementById('pickerCount').textContent = `${list.length} ETF`;
+
+  document.querySelectorAll('.picker-table thead th[data-sort]').forEach(th=>{
+    const active = th.dataset.sort === PICKER_SORT.key;
+    th.classList.toggle('sorted', active);
+    const oldArr = th.querySelector('.arr');
+    if (oldArr) oldArr.remove();
+    if (active){
+      const arr = document.createElement('span');
+      arr.className = 'arr';
+      arr.textContent = PICKER_SORT.dir === 'asc' ? '▲' : '▼';
+      th.appendChild(arr);
+    }
+  });
+
+  if (!list.length){
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = list.map(e=>{
+    const s = statFor(e.ticker);
+    const meta = ETF_META[e.ticker] || {};
+    const fee = ETF_FEES[e.ticker];
+    const badges = [
+      meta.currency ? `<span class="mini-badge">${meta.currency}${meta.hedged?' 🛡':''}</span>` : '',
+      meta.distribution ? `<span class="mini-badge">${trDistribution(meta.distribution)}</span>` : '',
+      meta.pea ? `<span class="mini-badge pea">PEA</span>` : '',
+    ].join('');
+    return `<tr data-ticker="${e.ticker}"${e.ticker===currentTicker?' class="current"':''}>
+      <td class="name"><div class="picker-etf-name"><span class="tk">${e.ticker}</span><span class="nm">${e.name}</span>${badges}</div></td>
+      <td class="picker-hide-sm">${trCategory(e.category)}</td>
+      <td>${s ? fmtPct(s.ann_return,1) : '—'}</td>
+      <td>${s ? fmtNum(s.ann_vol,1)+'%' : '—'}</td>
+      <td class="picker-hide-sm">${s && s.sharpe!=null ? fmtRatio(s.sharpe) : '—'}</td>
+      <td class="picker-hide-sm">${s && s.sortino!=null ? fmtRatio(s.sortino) : '—'}</td>
+      <td class="picker-hide-sm">${s ? fmtYears(s.years)+' '+_t('ans','yr') : '—'}</td>
+      <td>${fee!==undefined ? fmtNum(fee,2)+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr').forEach(tr=>{
+    tr.addEventListener('click', ()=> selectPickerTicker(tr.dataset.ticker));
+  });
+}
+
+function selectPickerTicker(ticker){
+  if (!PICKER_ROW) return;
+  const select = PICKER_ROW.querySelector('.etf-select');
+  select.value = ticker;
+  select.dispatchEvent(new Event('change'));
+  closeEtfPicker();
+}
+
+function openEtfPicker(row){
+  PICKER_ROW = row;
+  renderPickerResults();
+  document.getElementById('etfPickerOverlay').classList.add('open');
+  document.getElementById('pickerSearch').focus();
+}
+
+function closeEtfPicker(){
+  document.getElementById('etfPickerOverlay').classList.remove('open');
+  PICKER_ROW = null;
+}
+
+function populatePickerFilterSelects(){
+  const catSelect = document.getElementById('pickerCategorySelect');
+  const prevCat = catSelect.value;
+  catSelect.innerHTML = `<option value="">${_t('Toutes','All')}</option>` +
+    CURRENT_CATEGORIES.map(c=>`<option value="${c.name}">${trCategory(c.name)}</option>`).join('');
+  catSelect.value = prevCat;
+
+  const zoneSelect = document.getElementById('pickerZoneSelect');
+  const prevZone = zoneSelect.value;
+  zoneSelect.innerHTML = `<option value="">${_t('Toutes','All')}</option>` +
+    GEO_ZONES_ORDER.map(z=>`<option value="${z}">${trGeo(z)}</option>`).join('');
+  zoneSelect.value = prevZone;
+
+  const currSelect = document.getElementById('pickerCurrencySelect');
+  const prevCurr = currSelect.value;
+  const currencies = [...new Set(Object.values(ETF_META).map(m=>m.currency).filter(Boolean))].sort();
+  currSelect.innerHTML = `<option value="">${_t('Toutes','All')}</option>` +
+    currencies.map(c=>`<option value="${c}">${c}</option>`).join('');
+  currSelect.value = prevCurr;
+
+  document.getElementById('pickerDistSelect').innerHTML = `<option value="">${_t('Toutes','All')}</option>
+    <option value="Capitalisant">${_t('Capitalisant','Accumulating')}</option>
+    <option value="Distribuant">${_t('Distribuant','Distributing')}</option>`;
+  document.getElementById('pickerDistSelect').value = PICKER_FILTERS.distribution;
+
+  document.getElementById('pickerYearsSelect').innerHTML = `<option value="0">${_t('Toutes','All')}</option>
+    <option value="1">&ge; 1 ${_t('an','yr')}</option>
+    <option value="3">&ge; 3 ${_t('ans','yr')}</option>
+    <option value="5">&ge; 5 ${_t('ans','yr')}</option>
+    <option value="10">&ge; 10 ${_t('ans','yr')}</option>
+    <option value="20">&ge; 20 ${_t('ans','yr')}</option>`;
+  document.getElementById('pickerYearsSelect').value = String(PICKER_FILTERS.minYears);
+}
+
+function updatePickerDisclaimer(){
+  const scrapedAt = ETF_META_SCRAPED_AT ? new Date(ETF_META_SCRAPED_AT) : null;
+  const dateStr = scrapedAt ? scrapedAt.toLocaleDateString(LANG==='en'?'en-GB':'fr-FR', {year:'numeric',month:'long',day:'numeric'}) : null;
+  document.getElementById('pickerDisclaimer').textContent = _t(
+    `Frais, éligibilité PEA, devise et distribution : meilleure estimation${dateStr ? ' (mise à jour justETF au '+dateStr+')' : ''}, à vérifier avant d'investir. Rendement/volatilité affichés par ETF isolé sur son historique disponible, à titre de repère.`,
+    `Fees, PEA eligibility, currency and distribution: best estimate${dateStr ? ' (justETF data as of '+dateStr+')' : ''}, verify before investing. Return/volatility shown per standalone ETF over its available history, as a reference only.`
+  );
+}
+
+function resetPickerFilters(){
+  PICKER_FILTERS.query = ''; PICKER_FILTERS.category = ''; PICKER_FILTERS.zone = '';
+  PICKER_FILTERS.currency = ''; PICKER_FILTERS.distribution = ''; PICKER_FILTERS.minYears = 0; PICKER_FILTERS.peaOnly = false;
+  document.getElementById('pickerSearch').value = '';
+  document.getElementById('pickerCategorySelect').value = '';
+  document.getElementById('pickerZoneSelect').value = '';
+  document.getElementById('pickerCurrencySelect').value = '';
+  document.getElementById('pickerDistSelect').value = '';
+  document.getElementById('pickerYearsSelect').value = '0';
+  document.getElementById('pickerPeaToggle').checked = false;
+  renderPickerResults();
+}
+
+function setupEtfPicker(){
+  populatePickerFilterSelects();
+  updatePickerDisclaimer();
+
+  document.getElementById('etfPickerClose').addEventListener('click', closeEtfPicker);
+  document.getElementById('etfPickerOverlay').addEventListener('click', (e)=>{
+    if (e.target.id === 'etfPickerOverlay') closeEtfPicker();
+  });
+  document.getElementById('pickerSearch').addEventListener('input', (e)=>{
+    PICKER_FILTERS.query = e.target.value;
+    renderPickerResults();
+  });
+  document.getElementById('pickerCategorySelect').addEventListener('change', e=>{ PICKER_FILTERS.category = e.target.value; renderPickerResults(); });
+  document.getElementById('pickerZoneSelect').addEventListener('change', e=>{ PICKER_FILTERS.zone = e.target.value; renderPickerResults(); });
+  document.getElementById('pickerCurrencySelect').addEventListener('change', e=>{ PICKER_FILTERS.currency = e.target.value; renderPickerResults(); });
+  document.getElementById('pickerDistSelect').addEventListener('change', e=>{ PICKER_FILTERS.distribution = e.target.value; renderPickerResults(); });
+  document.getElementById('pickerYearsSelect').addEventListener('change', e=>{ PICKER_FILTERS.minYears = parseFloat(e.target.value)||0; renderPickerResults(); });
+  document.getElementById('pickerPeaToggle').addEventListener('change', e=>{ PICKER_FILTERS.peaOnly = e.target.checked; renderPickerResults(); });
+  document.getElementById('pickerResetBtn').addEventListener('click', resetPickerFilters);
+  document.querySelectorAll('.picker-table thead th[data-sort]').forEach(th=>{
+    th.addEventListener('click', ()=> onPickerSortClick(th));
+  });
+  document.getElementById('pickerCustomBtn').addEventListener('click', ()=>{
+    if (!PICKER_ROW) return;
+    const select = PICKER_ROW.querySelector('.etf-select');
+    select.value = '__custom__';
+    select.dispatchEvent(new Event('change'));
+    closeEtfPicker();
+  });
+  document.getElementById('pickerSyntheticBtn').addEventListener('click', ()=>{
+    if (!PICKER_ROW) return;
+    const select = PICKER_ROW.querySelector('.etf-select');
+    select.value = '__synthetic__';
+    select.dispatchEvent(new Event('change'));
+    closeEtfPicker();
+  });
 }
 
 function sortRowsByWeight(){
@@ -972,8 +1702,7 @@ function handleCustomTicker(row, presetValue){
       customInput = document.createElement('input');
       customInput.type = 'text';
       customInput.className = 'etf-custom';
-      customInput.placeholder = 'Ticker Yahoo Finance (ex: VUSA.L, EXCS)';
-      customInput.style.gridColumn = '1 / 2';
+      customInput.placeholder = _t('Ticker Yahoo Finance (ex: VUSA.L, EXCS)','Yahoo Finance ticker (e.g.: VUSA.L, EXCS)');
       customInput.addEventListener('input', ()=>{
         savePortfolioState();
         clearTickerStatus(row);
@@ -991,11 +1720,10 @@ function handleCustomTicker(row, presetValue){
           validateCustomTicker(row);
         }
       });
-      row.insertBefore(customInput, row.children[1]);
+      row.querySelector('.etf-cell').appendChild(customInput);
       statusEl = document.createElement('div');
       statusEl.className = 'ticker-status';
-      statusEl.style.gridColumn = '1 / 2';
-      row.insertBefore(statusEl, customInput.nextSibling);
+      row.querySelector('.etf-cell').appendChild(statusEl);
     }
     if (presetValue !== null){
       customInput.value = presetValue;
@@ -1028,10 +1756,11 @@ function uniqueSynthTicker(baseSlug, row){
 function registerSyntheticRow(row){
   const form = row.querySelector('.synthetic-form');
   if (!form) return;
-  const name = form.querySelector('.synth-name').value.trim() || 'Fonds Euro';
+  const name = form.querySelector('.synth-name').value.trim() || _t('Fonds Euro','Fixed-rate fund');
   const ticker = uniqueSynthTicker(slugifySynthName(name), row);
   row.dataset.synthTicker = ticker;
   ETF_NAMES[ticker] = name;
+  ETF_GEO[ticker] = {'Fonds a taux fixe': 100};
   if (ETF_FEES[ticker] === undefined) ETF_FEES[ticker] = 0;
   savePortfolioState();
 }
@@ -1043,12 +1772,11 @@ function handleSyntheticAsset(row, preset){
     if (!form){
       form = document.createElement('div');
       form.className = 'synthetic-form';
-      form.style.gridColumn = '1 / 2';
       form.innerHTML = `
-        <input type="text" class="synth-name" placeholder="Nom (ex: Fonds Euro)">
-        <input type="number" class="synth-return" placeholder="Rendement %/an" step="0.1">
-        <input type="number" class="synth-vol" placeholder="Volatilité %/an" step="0.1" min="0">`;
-      row.insertBefore(form, row.children[1]);
+        <input type="text" class="synth-name" placeholder="${_t('Nom (ex: Fonds Euro)','Name (e.g.: Fixed-rate fund)')}">
+        <input type="number" class="synth-return" placeholder="${_t('Rendement %/an','Return %/yr')}" step="0.1">
+        <input type="number" class="synth-vol" placeholder="${_t('Volatilité %/an','Volatility %/yr')}" step="0.1" min="0">`;
+      row.querySelector('.etf-cell').appendChild(form);
       form.querySelectorAll('input').forEach(inp=>{
         inp.addEventListener('input', ()=> registerSyntheticRow(row));
       });
@@ -1057,11 +1785,11 @@ function handleSyntheticAsset(row, preset){
     const retInput = form.querySelector('.synth-return');
     const volInput = form.querySelector('.synth-vol');
     if (preset && (preset.name !== undefined || preset.ann_return !== undefined)){
-      nameInput.value = preset.name || 'Fonds Euro';
+      nameInput.value = preset.name || _t('Fonds Euro','Fixed-rate fund');
       if (preset.ann_return !== undefined) retInput.value = preset.ann_return;
       if (preset.ann_vol !== undefined) volInput.value = preset.ann_vol;
     } else if (!nameInput.value){
-      nameInput.value = 'Fonds Euro';
+      nameInput.value = _t('Fonds Euro','Fixed-rate fund');
       retInput.value = 2.5;
       volInput.value = 0.5;
     }
@@ -1089,13 +1817,13 @@ async function validateCustomTicker(row){
   // a more recent one
   const myToken = (row._tickerToken = (row._tickerToken||0) + 1);
   statusEl.className = 'ticker-status checking';
-  statusEl.innerHTML = '<span class="spinner"></span>Vérification…';
+  statusEl.innerHTML = `<span class="spinner"></span>${_t('Vérification…','Checking…')}`;
   try {
     const res = await fetch(`/api/resolve-ticker?ticker=${encodeURIComponent(typed)}`);
     if (row._tickerToken !== myToken) return;
     if (!res.ok){
       statusEl.className = 'ticker-status invalid';
-      statusEl.textContent = `✕ "${typed}" introuvable sur Yahoo Finance (essayé avec .L, .AS, .DE, .PA, .MI, .SW, .TO)`;
+      statusEl.textContent = _t(`✕ "${typed}" introuvable sur Yahoo Finance (essayé avec .L, .AS, .DE, .PA, .MI, .SW, .TO)`, `✕ "${typed}" not found on Yahoo Finance (tried with .L, .AS, .DE, .PA, .MI, .SW, .TO)`);
       return;
     }
     const info = await res.json();
@@ -1109,11 +1837,12 @@ async function validateCustomTicker(row){
     select.value = info.ticker;
     handleCustomTicker(row, null); // ticker is now a normal option — drop the freeform input
     row.querySelector('.fee-input').value = ETF_FEES[info.ticker];
+    updateEtfTriggerLabel(row);
     savePortfolioState();
   } catch (e) {
     if (row._tickerToken !== myToken) return;
     statusEl.className = 'ticker-status invalid';
-    statusEl.textContent = '✕ Vérification impossible (réseau)';
+    statusEl.textContent = _t('✕ Vérification impossible (réseau)','✕ Check failed (network)');
   }
 }
 
@@ -1134,7 +1863,7 @@ function updateWeightTotal(){
   let total = 0;
   rows.forEach(r=> total += parseFloat(r.querySelector('.weight-input').value) || 0);
   const el = document.getElementById('weightTotal');
-  el.innerHTML = `Total&nbsp;: <b>${total.toFixed(0)}%</b>` + (Math.abs(total-100)>0.5 ? ' (sera normalisé à 100%)' : '');
+  el.innerHTML = `${_t('Total','Total')}&nbsp;: <b>${total.toFixed(0)}%</b>` + (Math.abs(total-100)>0.5 ? ' '+_t('(sera normalisé à 100%)','(will be normalized to 100%)') : '');
   el.classList.toggle('off', Math.abs(total-100)>0.5);
   savePortfolioState();
 }
@@ -1196,12 +1925,18 @@ async function initBuilder(){
   const data = await res.json();
   CURRENT_CATEGORIES = data.categories;
   DEFAULT_TER = data.default_ter ?? 0.20;
-  CURRENT_CATEGORIES.forEach(cat=> cat.etfs.forEach(e=>{ ETF_NAMES[e.ticker]=e.name; ETF_FEES[e.ticker]=e.ter; }));
+  GEO_REGIONS_ORDER = data.geo_regions_order || [];
+  GEO_ZONES_ORDER = data.geo_zones_order || [];
+  GEO_ZONE_OF = data.geo_zone_of || {};
+  ETF_META = data.meta || {};
+  ETF_META_SCRAPED_AT = data.meta_scraped_at || null;
+  CURRENT_CATEGORIES.forEach(cat=> cat.etfs.forEach(e=>{ ETF_NAMES[e.ticker]=e.name; ETF_FEES[e.ticker]=e.ter; ETF_GEO[e.ticker]=e.geo || {}; }));
   CUSTOM_TICKERS = loadCustomTickers();
   CUSTOM_TICKERS.forEach(e=>{
     ETF_NAMES[e.ticker]=e.name;
     if (e.stats) ETF_STATS[e.ticker]=e.stats;
     ETF_FEES[e.ticker] = (e.stats && e.stats.ter!==undefined) ? e.stats.ter : DEFAULT_TER;
+    ETF_GEO[e.ticker] = {'Non classe': 100};
   });
   rebuildOptionsHTML();
 
@@ -1220,7 +1955,7 @@ async function initBuilder(){
   document.getElementById('yearsInput').addEventListener('change', savePortfolioState);
   document.getElementById('windowInput').addEventListener('change', savePortfolioState);
   document.getElementById('annualRebalanceInput').addEventListener('change', savePortfolioState);
-  setupSortControls();
+  setupEtfPicker();
   setupCompositionToggle();
   setupComparisonSort();
   setupOptimization();
@@ -1242,14 +1977,14 @@ async function runSimulation(){
   errBanner.style.display = 'none';
 
   if (portfolio.length === 0){
-    errBanner.textContent = 'Ajoutez au moins un actif avec une pondération positive.';
+    errBanner.textContent = _t('Ajoutez au moins un actif avec une pondération positive.','Add at least one asset with a positive weight.');
     errBanner.style.display = 'block';
     return;
   }
 
   const btn = document.getElementById('updateBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Calcul…';
+  btn.innerHTML = `<span class="spinner"></span>${_t('Calcul…','Calculating…')}`;
   document.getElementById('loadingOverlay').style.display = 'flex';
   document.getElementById('reportArea').classList.remove('visible');
 
@@ -1260,12 +1995,12 @@ async function runSimulation(){
       body: JSON.stringify({portfolio, years, window_months: windowMonths, annual_rebalance: annualRebalance}),
     });
     if (!res.ok){
-      const err = await res.json().catch(()=>({detail:'Erreur inconnue'}));
-      throw new Error(err.detail || 'Erreur inconnue');
+      const err = await res.json().catch(()=>({detail:_t('Erreur inconnue','Unknown error')}));
+      throw new Error(err.detail || _t('Erreur inconnue','Unknown error'));
     }
     const data = await res.json();
     if (data.failed && data.failed.length){
-      warnBanner.innerHTML = '<b>Attention —</b> certains actifs n\'ont pas pu être récupérés et ont été exclus : ' +
+      warnBanner.innerHTML = `<b>${_t('Attention —','Warning —')}</b> ` + _t("certains actifs n'ont pas pu être récupérés et ont été exclus : ","some assets could not be retrieved and were excluded: ") +
         data.failed.map(f=>`${f.ticker} (${f.reason})`).join(', ');
       warnBanner.style.display = 'block';
     }
@@ -1276,7 +2011,7 @@ async function runSimulation(){
     errBanner.style.display = 'block';
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Mettre à jour le rapport';
+    btn.textContent = _t('Mettre à jour le rapport','Update report');
     document.getElementById('loadingOverlay').style.display = 'none';
   }
 }
@@ -1300,24 +2035,28 @@ function renderReport(data){
     item.className = 'comp-item';
     item.innerHTML = `<div class="swatch" style="background:${color}"></div>
       <div><div class="lbl">${t} — ${w.toFixed(0)}%</div>
-      <div class="sub">${fmtPct(data.assets[t].ann_return)}/an réel (${fmtYears(data.assets[t].years)} ans)</div></div>`;
+      <div class="sub">${fmtPct(data.assets[t].ann_return)}${_t('/an réel','/yr actual')} (${fmtYears(data.assets[t].years)} ${_t('ans','yr')})</div></div>`;
     legend.appendChild(item);
   });
   drawCompositionPie(data);
+  renderGeoExposure(data);
 
   /* comparison table (sortable) */
   {
     const ari = data.annual_rebalance_info;
     const modeNote = data.rebalance_mode === 'annual'
-      ? ` · réallocation annuelle${ari ? ` — ${ari.excluded_tickers.join(', ')} exclu${ari.excluded_tickers.length>1?'s':''} de la ligne Portefeuille (voir le backtest réel ci-dessous)` : ''}`
-      : ' · rééquilibrage mensuel';
+      ? ' · ' + _t('réallocation annuelle','annual rebalancing') + (ari ? ` — ${ari.excluded_tickers.join(', ')} ` + _t(`exclu${ari.excluded_tickers.length>1?'s':''} de la ligne Portefeuille (voir le backtest réel ci-dessous)`, `excluded from the Portfolio line (see the real backtest below)`) : '')
+      : ' · ' + _t('rééquilibrage mensuel','monthly rebalancing');
     const coverageNote = (data.rebalance_mode !== 'annual' && data.full_coverage_period.n_months < data.backtest_period.n_months)
-      ? ` La période commune du Portefeuille inclut des années où un ou plusieurs actifs n'existaient pas encore ` +
-        `(historique partiel, poids re-normalisé sur les autres pour ces mois) — voir "Backtest réel" plus bas pour le détail année par année.`
+      ? ' ' + _t(
+          `La période commune du Portefeuille inclut des années où un ou plusieurs actifs n'existaient pas encore (historique partiel, poids re-normalisé sur les autres pour ces mois) — voir "Backtest réel" plus bas pour le détail année par année.`,
+          `The Portfolio's common period includes years where one or more assets didn't exist yet (partial history, weight re-normalized over the others for those months) — see "Real backtest" below for the year-by-year detail.`)
       : '';
     document.getElementById('comparisonSub').textContent =
-      `Chaque actif sur sa propre période disponible (durée entre parenthèses) ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}${modeNote}. ` +
-      `Les périodes différant d'un actif à l'autre, la moyenne pondérée des lignes individuelles n'égale pas la ligne Portefeuille — ce n'est pas une erreur.${coverageNote}`;
+      _t(`Chaque actif sur sa propre période disponible (durée entre parenthèses) ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}`,
+         `Each asset over its own available period (duration in parentheses); "Portfolio" line over the common period ${data.backtest_period.start} – ${data.backtest_period.end}`) + `${modeNote}. ` +
+      _t(`Les périodes différant d'un actif à l'autre, la moyenne pondérée des lignes individuelles n'égale pas la ligne Portefeuille — ce n'est pas une erreur.`,
+         `Since periods differ from one asset to another, the weighted average of the individual rows doesn't equal the Portfolio line — that's not an error.`) + coverageNote;
   }
   renderComparisonTable(data);
 
@@ -1331,7 +2070,9 @@ function renderReport(data){
   renderBacktestView();
 
   /* correlation */
-  document.getElementById('corrSub').textContent = `Rendements mensuels, ${data.correlation_period.start} – ${data.correlation_period.end} (toujours sur la période étendue, quel que soit le mode de rééquilibrage)`;
+  document.getElementById('corrSub').textContent = _t(
+    `Rendements mensuels, ${data.correlation_period.start} – ${data.correlation_period.end} (toujours sur la période étendue, quel que soit le mode de rééquilibrage)`,
+    `Monthly returns, ${data.correlation_period.start} – ${data.correlation_period.end} (always over the extended period, regardless of rebalancing mode)`);
   drawCorrTable(data.correlation, tickers);
 
   /* Monte Carlo (may be unavailable if too little full-coverage history) */
@@ -1351,36 +2092,39 @@ function renderReport(data){
 
     const fcp = data.full_coverage_period;
     const coverageNote = fcp.n_months < data.backtest_period.n_months
-      ? ` (basé sur la période à couverture complète : ${fmtMonthPeriod(fcp.start)} → ${fmtMonthPeriod(fcp.end)}, ${fcp.n_years} ans)`
+      ? ' ' + _t(`(basé sur la période à couverture complète : ${fmtMonthPeriod(fcp.start)} → ${fmtMonthPeriod(fcp.end)}, ${fcp.n_years} ans)`,
+                 `(based on the full-coverage period: ${fmtMonthPeriod(fcp.start)} → ${fmtMonthPeriod(fcp.end)}, ${fcp.n_years} yr)`)
       : '';
 
-    document.getElementById('mc6Title').textContent = `Monte Carlo — fenêtre de ${wm} mois`;
-    document.getElementById('mcBestTag').textContent = `Meilleure fenêtre ${wm} mois — distribution`;
-    document.getElementById('mcWorstTag').textContent = `Pire fenêtre ${wm} mois — distribution`;
-    document.getElementById('histBestTitle').textContent = `Distribution — meilleure fenêtre ${wm} mois`;
-    document.getElementById('histWorstTitle').textContent = `Distribution — pire fenêtre ${wm} mois`;
+    document.getElementById('mc6Title').textContent = _t(`Monte Carlo — fenêtre de ${wm} mois`, `Monte Carlo — ${wm}-month window`);
+    document.getElementById('mcBestTag').textContent = _t(`Meilleure fenêtre ${wm} mois — distribution`, `Best ${wm}-month window — distribution`);
+    document.getElementById('mcWorstTag').textContent = _t(`Pire fenêtre ${wm} mois — distribution`, `Worst ${wm}-month window — distribution`);
+    document.getElementById('histBestTitle').textContent = _t(`Distribution — meilleure fenêtre ${wm} mois`, `Distribution — best ${wm}-month window`);
+    document.getElementById('histWorstTitle').textContent = _t(`Distribution — pire fenêtre ${wm} mois`, `Distribution — worst ${wm}-month window`);
     document.getElementById('mc6Sub').textContent =
-      `${data.mc_window.n_sims} trajectoires de ${data.mc_window.horizon_years} ans générées par bootstrap par blocs de ${wm} mois sur les rendements mensuels réels${coverageNote}`;
+      _t(`${data.mc_window.n_sims} trajectoires de ${data.mc_window.horizon_years} ans générées par bootstrap par blocs de ${wm} mois sur les rendements mensuels réels`,
+         `${data.mc_window.n_sims} paths over ${data.mc_window.horizon_years} yr generated by block bootstrap (${wm}-month blocks) on real monthly returns`) + coverageNote;
     const b = data.mc_window.best, w = data.mc_window.worst;
-    document.getElementById('mcBestRange').textContent = `${fmtPct(b.p5,0)} à ${fmtPct(b.p95,0)}`;
-    document.getElementById('mcBestExtra').textContent = `médiane ${fmtPct(b.median,0)} · maximum observé ${fmtPct(b.max,0)}`;
-    document.getElementById('mcWorstRange').textContent = `${fmtPct(w.p95,0)} à ${fmtPct(w.p5,0)}`;
-    document.getElementById('mcWorstExtra').textContent = `médiane ${fmtPct(w.median,0)} · minimum observé ${fmtPct(w.min,0)}`;
-    document.getElementById('histBestNote').textContent = `sur ${data.mc_window.n_sims} trajectoires simulées`;
-    document.getElementById('histWorstNote').textContent = `sur ${data.mc_window.n_sims} trajectoires simulées`;
-    drawHist('histBest','histBestTooltip', b.hist, 'good', [{value:b.median, label:'méd.'}]);
-    drawHist('histWorst','histWorstTooltip', w.hist, 'bad', [{value:w.median, label:'méd.'}]);
+    document.getElementById('mcBestRange').textContent = `${fmtPct(b.p5,0)} ${_t('à','to')} ${fmtPct(b.p95,0)}`;
+    document.getElementById('mcBestExtra').textContent = _t(`médiane ${fmtPct(b.median,0)} · maximum observé ${fmtPct(b.max,0)}`, `median ${fmtPct(b.median,0)} · observed max ${fmtPct(b.max,0)}`);
+    document.getElementById('mcWorstRange').textContent = `${fmtPct(w.p95,0)} ${_t('à','to')} ${fmtPct(w.p5,0)}`;
+    document.getElementById('mcWorstExtra').textContent = _t(`médiane ${fmtPct(w.median,0)} · minimum observé ${fmtPct(w.min,0)}`, `median ${fmtPct(w.median,0)} · observed min ${fmtPct(w.min,0)}`);
+    document.getElementById('histBestNote').textContent = _t(`sur ${data.mc_window.n_sims} trajectoires simulées`, `over ${data.mc_window.n_sims} simulated paths`);
+    document.getElementById('histWorstNote').textContent = _t(`sur ${data.mc_window.n_sims} trajectoires simulées`, `over ${data.mc_window.n_sims} simulated paths`);
+    drawHist('histBest','histBestTooltip', b.hist, 'good', [{value:b.median, label:_t('méd.','med.')}]);
+    drawHist('histWorst','histWorstTooltip', w.hist, 'bad', [{value:w.median, label:_t('méd.','med.')}]);
 
     /* MC N years */
     const nY = data.mc_nyear;
     document.getElementById('mcNSub').textContent =
-      `${nY.n_sims} trajectoires simulées sur ${nY.years} ans par bootstrap par blocs de ${wm} mois${coverageNote}`;
-    document.getElementById('mcTotalRange').textContent = `${fmtPct(nY.total_return.p5,0)} à ${fmtPct(nY.total_return.p95,0)}`;
-    document.getElementById('mcTotalExtra').textContent = `médiane ${fmtPct(nY.total_return.median,0)} sur ${nY.years} ans`;
-    document.getElementById('mcCagrRange').textContent = `${fmtPct(nY.cagr.p5,0)} à ${fmtPct(nY.cagr.p95,0)}`;
-    document.getElementById('mcCagrExtra').textContent = `médiane ${fmtPct(nY.cagr.median,0)} par an`;
+      _t(`${nY.n_sims} trajectoires simulées sur ${nY.years} ans par bootstrap par blocs de ${wm} mois`,
+         `${nY.n_sims} paths simulated over ${nY.years} yr by block bootstrap (${wm}-month blocks)`) + coverageNote;
+    document.getElementById('mcTotalRange').textContent = `${fmtPct(nY.total_return.p5,0)} ${_t('à','to')} ${fmtPct(nY.total_return.p95,0)}`;
+    document.getElementById('mcTotalExtra').textContent = _t(`médiane ${fmtPct(nY.total_return.median,0)} sur ${nY.years} ans`, `median ${fmtPct(nY.total_return.median,0)} over ${nY.years} yr`);
+    document.getElementById('mcCagrRange').textContent = `${fmtPct(nY.cagr.p5,0)} ${_t('à','to')} ${fmtPct(nY.cagr.p95,0)}`;
+    document.getElementById('mcCagrExtra').textContent = _t(`médiane ${fmtPct(nY.cagr.median,0)} par an`, `median ${fmtPct(nY.cagr.median,0)} per year`);
     document.getElementById('fanNote').textContent =
-      `Bandes P5–P95 et P25–P75 sur ${nY.n_sims} trajectoires · ligne = trajectoire médiane`;
+      _t(`Bandes P5–P95 et P25–P75 sur ${nY.n_sims} trajectoires · ligne = trajectoire médiane`, `P5–P95 and P25–P75 bands over ${nY.n_sims} paths · line = median path`);
     drawFanChart(nY.fan);
   }
 }
@@ -1428,19 +2172,19 @@ function renderComparisonTable(data){
 
   rows.forEach(r=>{
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(r.ticker)}"></span><span>${r.ticker} — ${ETF_NAMES[r.ticker]||''} <span class="muted-inline">(${fmtYears(r.years)} ans)</span></span></td>
+    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(r.ticker)}"></span><span>${r.ticker} — ${ETF_NAMES[r.ticker]||''} <span class="muted-inline">(${fmtYears(r.years)} ${_t('ans','yr')})</span></span></td>
       <td>${r.weight.toFixed(0)}%</td>
       <td>${fmtPct(r.ret)}</td>
-      <td>${r.vol.toFixed(1).replace('.',',')} %</td>
-      <td>${r.fee.toFixed(2).replace('.',',')} %</td>`;
+      <td>${fmtNum(r.vol,1)} %</td>
+      <td>${fmtNum(r.fee,2)} %</td>`;
     tbody.appendChild(tr);
   });
   const avgFee = data.used_tickers.reduce((sum,t)=> sum + (data.weights_pct[t]/100)*((data.fees_pct&&data.fees_pct[t])||0), 0);
   const trTotal = document.createElement('tr');
   trTotal.className = 'row-total';
-  trTotal.innerHTML = `<td class="name">Portefeuille</td><td>100%</td>
-    <td>${fmtPct(data.portfolio.ann_return)}</td><td>${data.portfolio.ann_vol.toFixed(1).replace('.',',')} %</td>
-    <td>${avgFee.toFixed(2).replace('.',',')} %</td>`;
+  trTotal.innerHTML = `<td class="name">${_t('Portefeuille','Portfolio')}</td><td>100%</td>
+    <td>${fmtPct(data.portfolio.ann_return)}</td><td>${fmtNum(data.portfolio.ann_vol,1)} %</td>
+    <td>${fmtNum(avgFee,2)} %</td>`;
   tbody.appendChild(trTotal);
 
   document.querySelectorAll('#comparison .sortable-th').forEach(th=>{
@@ -1450,20 +2194,21 @@ function renderComparisonTable(data){
 }
 
 /* ---------------- risk metrics ---------------- */
-function fmtRatio(v){ return (v===null||v===undefined) ? '—' : (v>0?'+':'') + v.toFixed(2).replace('.',','); }
+function fmtRatio(v){ return (v===null||v===undefined) ? '—' : (v>0?'+':'') + (LANG==='en' ? v.toFixed(2) : v.toFixed(2).replace('.',',')); }
 function fmtPctCellOrDash(v){ return (v===null||v===undefined) ? '—' : fmtPct(v); }
 function sharpeClass(v){ if (v===null||v===undefined) return ''; if (v>=1) return 'cell-good'; if (v<0) return 'cell-bad'; return ''; }
 
 function renderRiskMetrics(data){
   document.getElementById('riskMetricsSub').textContent =
-    `Chaque actif sur sa propre période disponible ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}`;
+    _t(`Chaque actif sur sa propre période disponible ; ligne "Portefeuille" sur la période commune ${data.backtest_period.start} – ${data.backtest_period.end}`,
+       `Each asset over its own available period; "Portfolio" line over the common period ${data.backtest_period.start} – ${data.backtest_period.end}`);
   const tbody = document.getElementById('riskTableBody');
   tbody.innerHTML = '';
 
   data.used_tickers.forEach(t=>{
     const rm = data.risk_metrics.assets[t];
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(t)}"></span><span>${t} <span class="muted-inline">(${fmtYears(data.assets[t].years)} ans)</span></span></td>
+    tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(t)}"></span><span>${t} <span class="muted-inline">(${fmtYears(data.assets[t].years)} ${_t('ans','yr')})</span></span></td>
       <td class="${rm?sharpeClass(rm.sharpe):''}">${rm?fmtRatio(rm.sharpe):'—'}</td>
       <td class="${rm?sharpeClass(rm.sortino):''}">${rm?fmtRatio(rm.sortino):'—'}</td>
       <td>${rm?fmtPctCellOrDash(rm.max_drawdown):'—'}</td>
@@ -1474,7 +2219,7 @@ function renderRiskMetrics(data){
   const pr = data.risk_metrics.portfolio;
   const trTotal = document.createElement('tr');
   trTotal.className = 'row-total';
-  trTotal.innerHTML = `<td class="name">Portefeuille</td>
+  trTotal.innerHTML = `<td class="name">${_t('Portefeuille','Portfolio')}</td>
     <td class="${pr?sharpeClass(pr.sharpe):''}">${pr?fmtRatio(pr.sharpe):'—'}</td>
     <td class="${pr?sharpeClass(pr.sortino):''}">${pr?fmtRatio(pr.sortino):'—'}</td>
     <td>${pr?fmtPctCellOrDash(pr.max_drawdown):'—'}</td>
@@ -1484,17 +2229,29 @@ function renderRiskMetrics(data){
 }
 
 /* ---------------- resilience score + crisis stress-test ---------------- */
+const RESILIENCE_LABELS_EN = {
+  'Tres resilient': 'Very resilient', 'Resilient': 'Resilient', 'Modere': 'Moderate',
+  'Fragile': 'Fragile', 'Tres fragile': 'Very fragile',
+};
+const CRISIS_LABELS_EN = {
+  'Crise financiere 2008': '2008 Financial Crisis',
+  'Crise sanitaire (COVID-19)': 'Health Crisis (COVID-19)',
+  'Crise geopolitique (guerre en Ukraine)': 'Geopolitical Crisis (Ukraine war)',
+};
+function trResilience(label){ return LANG === 'en' ? (RESILIENCE_LABELS_EN[label] || label) : label; }
+function trCrisis(label){ return LANG === 'en' ? (CRISIS_LABELS_EN[label] || label) : label; }
+
 function renderResilience(data){
   const r = data.resilience;
   const scoreEl = document.getElementById('resilienceScoreValue');
   const labelEl = document.getElementById('resilienceScoreLabel');
   scoreEl.textContent = Math.round(r.score);
-  labelEl.textContent = r.label;
+  labelEl.textContent = trResilience(r.label);
   scoreEl.style.color = r.score>=65 ? 'var(--good-ink)' : (r.score>=35 ? 'var(--warning)' : 'var(--critical)');
 
   const compLabels = {
-    volatility: 'Volatilité', drawdown: 'Drawdown max', sharpe: 'Sharpe',
-    diversification: 'Diversification', crisis: 'Résistance aux crises',
+    volatility: _t('Volatilité','Volatility'), drawdown: _t('Drawdown max','Max drawdown'), sharpe: 'Sharpe',
+    diversification: _t('Diversification','Diversification'), crisis: _t('Résistance aux crises','Crisis resistance'),
   };
   const container = document.getElementById('resilienceComponents');
   container.innerHTML = '';
@@ -1516,7 +2273,7 @@ function renderResilience(data){
 function renderCrisisTable(data){
   const tickers = data.used_tickers;
   const theadRow = document.querySelector('#crisisTableBody').closest('table').querySelector('thead tr');
-  theadRow.innerHTML = '<th>Crise</th><th>Période</th><th>Portefeuille</th>' + tickers.map(t=>`<th>${t}</th>`).join('');
+  theadRow.innerHTML = `<th>${_t('Crise','Crisis')}</th><th>${_t('Période','Period')}</th><th>${_t('Portefeuille','Portfolio')}</th>` + tickers.map(t=>`<th>${t}</th>`).join('');
 
   const tbody = document.getElementById('crisisTableBody');
   tbody.innerHTML = '';
@@ -1526,7 +2283,7 @@ function renderCrisisTable(data){
     const portCell = crisis.available
       ? `<span class="${crisis.return_pct>=0?'cell-good':'cell-bad'}">${fmtPct(crisis.return_pct)}</span>`
       : '<span class="cell-muted">N/D</span>';
-    let html = `<td class="name">${crisis.label}</td><td>${periodLabel}</td><td>${portCell}</td>`;
+    let html = `<td class="name">${trCrisis(crisis.label)}</td><td>${periodLabel}</td><td>${portCell}</td>`;
     tickers.forEach(t=>{
       const ac = data.crisis_analysis.assets[t][idx];
       html += ac.available
@@ -1537,9 +2294,11 @@ function renderCrisisTable(data){
     tbody.appendChild(tr);
   });
 
-  document.getElementById('crisisNote').textContent =
+  document.getElementById('crisisNote').textContent = _t(
     "N/D = période antérieure à l'historique disponible pour cet actif (colonnes individuelles : historique complet de l'actif) ou pour le portefeuille (colonne Portefeuille : limitée à la période de backtest ci-dessus). " +
-    "Ces chiffres portent sur la période exacte de la crise (souvent quelques mois) et peuvent donc être bien pires que la \"pire performance\" glissante ci-dessous : une chute brève peut être absorbée par une bonne année civile ou une reprise rapide juste après, sans qu'aucune fenêtre glissante ne l'isole complètement.";
+    "Ces chiffres portent sur la période exacte de la crise (souvent quelques mois) et peuvent donc être bien pires que la \"pire performance\" glissante ci-dessous : une chute brève peut être absorbée par une bonne année civile ou une reprise rapide juste après, sans qu'aucune fenêtre glissante ne l'isole complètement.",
+    "N/D = period predating the available history for this asset (individual columns: the asset's full history) or for the portfolio (Portfolio column: limited to the backtest period above). " +
+    "These figures cover the crisis's exact period (often a few months), so they can be far worse than the rolling \"worst performance\" below: a brief drop can be absorbed by a strong calendar year or a quick rebound right after, without any rolling window fully isolating it.");
 }
 
 /* ---------------- portfolio optimization ---------------- */
@@ -1558,12 +2317,12 @@ async function runOptimization(){
   const btn = document.getElementById('optimizeBtn');
   const note = document.getElementById('optimizeNote');
   if (new Set(portfolio.map(p=>p.ticker)).size < 2){
-    note.textContent = 'Il faut au moins 2 actifs dans le portefeuille pour optimiser.';
+    note.textContent = _t('Il faut au moins 2 actifs dans le portefeuille pour optimiser.','You need at least 2 assets in the portfolio to optimize.');
     document.getElementById('optimizeResult').style.display = 'none';
     return;
   }
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Calcul…';
+  btn.innerHTML = `<span class="spinner"></span>${_t('Calcul…','Calculating…')}`;
   note.textContent = '';
   try {
     const res = await fetch('/api/optimize', {
@@ -1571,8 +2330,8 @@ async function runOptimization(){
       body: JSON.stringify({portfolio, max_deviation_pct: maxDeviation}),
     });
     if (!res.ok){
-      const err = await res.json().catch(()=>({detail:'Erreur inconnue'}));
-      throw new Error(err.detail || 'Erreur inconnue');
+      const err = await res.json().catch(()=>({detail:_t('Erreur inconnue','Unknown error')}));
+      throw new Error(err.detail || _t('Erreur inconnue','Unknown error'));
     }
     LAST_OPTIMIZE_RESULT = await res.json();
     renderOptimizationResult(LAST_OPTIMIZE_RESULT);
@@ -1581,27 +2340,35 @@ async function runOptimization(){
     document.getElementById('optimizeResult').style.display = 'none';
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Calculer les pondérations optimales';
+    btn.textContent = _t('Calculer les pondérations optimales','Calculate optimal weights');
   }
 }
 
 function renderOptimizationResult(result){
   document.getElementById('optimizeResult').style.display = 'block';
-  document.getElementById('optimizeNote').innerHTML =
-    `Chaque poids reste à ±${result.max_deviation_pct} points de son allocation actuelle, pour rester dans l'esprit de ce portefeuille. Portefeuilles "long only" (pas de vente à découvert).`;
+  document.getElementById('optimizeNote').innerHTML = _t(
+    `Chaque poids reste à ±${result.max_deviation_pct} points de son allocation actuelle, pour rester dans l'esprit de ce portefeuille. Portefeuilles "long only" (pas de vente à découvert).`,
+    `Each weight stays within ±${result.max_deviation_pct} points of its current allocation, to keep the spirit of this portfolio. "Long only" portfolios (no short selling).`);
 
-  const optPeriodLabel = `${result.period.n_months} mois (${fmtMonthPeriod(result.period.start)} → ${fmtMonthPeriod(result.period.end)})`;
-  document.getElementById('optCurrentTag').textContent = `Portefeuille actuel — stats sur ${optPeriodLabel}`;
+  const optPeriodLabel = LANG === 'en'
+    ? `${result.period.n_months} mo (${fmtMonthPeriod(result.period.start)} → ${fmtMonthPeriod(result.period.end)})`
+    : `${result.period.n_months} mois (${fmtMonthPeriod(result.period.start)} → ${fmtMonthPeriod(result.period.end)})`;
+  document.getElementById('optCurrentTag').textContent = _t(`Portefeuille actuel — stats sur ${optPeriodLabel}`, `Current portfolio — stats over ${optPeriodLabel}`);
 
   const callout = document.getElementById('periodMismatchCallout');
   if (LAST_REPORT_DATA && LAST_REPORT_DATA.backtest_period.n_months !== result.period.n_months){
     callout.style.display = 'block';
-    document.getElementById('periodMismatchText').innerHTML =
+    document.getElementById('periodMismatchText').innerHTML = _t(
       `Les chiffres ci-dessous portent sur <b>${optPeriodLabel}</b> — la seule période où <b>tous</b> les actifs sélectionnés ont des données en même temps ` +
       `(l'optimisation a besoin de comparer chaque actif mois par mois pour calculer les corrélations). ` +
       `Le rapport principal, lui, couvre <b>${LAST_REPORT_DATA.backtest_period.n_years} ans</b> en tolérant qu'un petit actif récent manque temporairement. ` +
       `C'est pour ça que le rendement du portefeuille "actuel" affiché ici peut différer de celui du tableau "Rendement &amp; volatilité recalculés" plus haut — ` +
-      `ce n'est pas une erreur, seule la fenêtre de mesure change.`;
+      `ce n'est pas une erreur, seule la fenêtre de mesure change.`,
+      `The figures below cover <b>${optPeriodLabel}</b> — the only period where <b>all</b> selected assets have data at once ` +
+      `(optimization needs to compare every asset month by month to compute correlations). ` +
+      `The main report, on the other hand, covers <b>${LAST_REPORT_DATA.backtest_period.n_years} yr</b>, tolerating a small recent asset being temporarily missing. ` +
+      `That's why the "current" portfolio return shown here can differ from the one in the "Recalculated return &amp; volatility" table above — ` +
+      `it's not an error, only the measurement window changes.`);
   } else {
     callout.style.display = 'none';
   }
@@ -1612,17 +2379,17 @@ function renderOptimizationResult(result){
   result.used_tickers.forEach(t=>{
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="name"><span class="swatch" style="background:${colorForTicker(t)}"></span>${t}</td>
-      <td>${currentWeights[t].toFixed(1)}%</td>
-      <td>${result.min_variance.weights_pct[t].toFixed(1)}%</td>
-      <td>${result.max_sharpe.weights_pct[t].toFixed(1)}%</td>`;
+      <td>${fmtNum(currentWeights[t],1)}%</td>
+      <td>${fmtNum(result.min_variance.weights_pct[t],1)}%</td>
+      <td>${fmtNum(result.max_sharpe.weights_pct[t],1)}%</td>`;
     tbody.appendChild(tr);
   });
 
-  document.getElementById('optCurrentStats').textContent = `${fmtPct(result.current.ann_return,1)}/an · vol ${result.current.ann_vol.toFixed(1)}%`;
+  document.getElementById('optCurrentStats').textContent = `${fmtPct(result.current.ann_return,1)}${_t('/an','/yr')} · vol ${result.current.ann_vol.toFixed(1)}%`;
   document.getElementById('optCurrentExtra').textContent = `Sharpe ${result.current.sharpe ?? '—'}`;
-  document.getElementById('optMinVarStats').textContent = `${fmtPct(result.min_variance.ann_return,1)}/an · vol ${result.min_variance.ann_vol.toFixed(1)}%`;
+  document.getElementById('optMinVarStats').textContent = `${fmtPct(result.min_variance.ann_return,1)}${_t('/an','/yr')} · vol ${result.min_variance.ann_vol.toFixed(1)}%`;
   document.getElementById('optMinVarExtra').textContent = `Sharpe ${result.min_variance.sharpe ?? '—'}`;
-  document.getElementById('optMaxSharpeStats').textContent = `${fmtPct(result.max_sharpe.ann_return,1)}/an · vol ${result.max_sharpe.ann_vol.toFixed(1)}%`;
+  document.getElementById('optMaxSharpeStats').textContent = `${fmtPct(result.max_sharpe.ann_return,1)}${_t('/an','/yr')} · vol ${result.max_sharpe.ann_vol.toFixed(1)}%`;
   document.getElementById('optMaxSharpeExtra').textContent = `Sharpe ${result.max_sharpe.sharpe ?? '—'}`;
 }
 
@@ -1653,7 +2420,7 @@ function renderAssetFilter(data){
     });
     return btn;
   }
-  container.appendChild(makeBtn('portfolio', 'Portefeuille', null));
+  container.appendChild(makeBtn('portfolio', _t('Portefeuille','Portfolio'), null));
   data.used_tickers.forEach((t,i)=> container.appendChild(makeBtn(t, t, colorFor(i))));
 }
 
@@ -1666,24 +2433,27 @@ function renderBacktestView(){
   const annual = isPortfolio ? data.annual_returns : data.asset_series[BACKTEST_FILTER].annual_returns;
   const assetIdx = isPortfolio ? -1 : data.used_tickers.indexOf(BACKTEST_FILTER);
   const assetColor = assetIdx >= 0 ? colorFor(assetIdx) : 'var(--s1)';
-  const subject = isPortfolio ? 'du portefeuille' : `de ${BACKTEST_FILTER}`;
+  const subject = isPortfolio ? _t('du portefeuille','of the portfolio') : `${_t('de','of')} ${BACKTEST_FILTER}`;
 
   document.getElementById('backtestTitle').textContent =
-    `Backtest réel — meilleure et pire fenêtre de ${wm} mois${isPortfolio ? '' : ' (' + BACKTEST_FILTER + ')'}`;
-  document.getElementById('bestRealTag').textContent = `Meilleure performance (${wm} mois)`;
-  document.getElementById('worstRealTag').textContent = `Pire performance (${wm} mois)`;
-  document.getElementById('rollChartTitle').textContent = `Performance ${subject} sur ${wm} mois glissants`;
-  document.getElementById('annualChartTitle').textContent = `Performance annuelle historique ${subject}`;
+    _t(`Backtest réel — meilleure et pire fenêtre de ${wm} mois${isPortfolio ? '' : ' (' + BACKTEST_FILTER + ')'}`,
+       `Real backtest — best and worst ${wm}-month window${isPortfolio ? '' : ' (' + BACKTEST_FILTER + ')'}`);
+  document.getElementById('bestRealTag').textContent = _t(`Meilleure performance (${wm} mois)`, `Best performance (${wm} mo)`);
+  document.getElementById('worstRealTag').textContent = _t(`Pire performance (${wm} mois)`, `Worst performance (${wm} mo)`);
+  document.getElementById('rollChartTitle').textContent = _t(`Performance ${subject} sur ${wm} mois glissants`, `Performance ${subject} over rolling ${wm}-month windows`);
+  document.getElementById('annualChartTitle').textContent = _t(`Performance annuelle historique ${subject}`, `Historical annual performance ${subject}`);
   if (isPortfolio){
     const rebalanceNote = data.rebalance_mode === 'annual'
-      ? ' · rééquilibrage annuel (les positions dérivent 12 mois avant retour aux poids cibles)'
-      : ' · rééquilibrage mensuel (poids cibles réappliqués chaque mois)';
+      ? ' · ' + _t('rééquilibrage annuel (les positions dérivent 12 mois avant retour aux poids cibles)','annual rebalancing (positions drift for 12 months before resetting to target weights)')
+      : ' · ' + _t('rééquilibrage mensuel (poids cibles réappliqués chaque mois)','monthly rebalancing (target weights reapplied every month)');
     document.getElementById('backtestSub').textContent =
-      `Sur la période de données réelles disponible pour ces actifs : ${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)} (${data.backtest_period.n_years} ans, ${data.backtest_period.n_months} mois)${rebalanceNote}`;
+      _t(`Sur la période de données réelles disponible pour ces actifs : ${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)} (${data.backtest_period.n_years} ans, ${data.backtest_period.n_months} mois)`,
+         `Over the real data period available for these assets: ${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)} (${data.backtest_period.n_years} yr, ${data.backtest_period.n_months} mo)`) + rebalanceNote;
   } else {
     const p = data.assets[BACKTEST_FILTER].period;
     document.getElementById('backtestSub').textContent =
-      `Sur l'historique disponible pour ${BACKTEST_FILTER} : ${fmtMonthPeriod(p.start)} → ${fmtMonthPeriod(p.end)} (${data.assets[BACKTEST_FILTER].years} ans, ${p.n_months} mois)`;
+      _t(`Sur l'historique disponible pour ${BACKTEST_FILTER} : ${fmtMonthPeriod(p.start)} → ${fmtMonthPeriod(p.end)} (${data.assets[BACKTEST_FILTER].years} ans, ${p.n_months} mois)`,
+         `Over the history available for ${BACKTEST_FILTER}: ${fmtMonthPeriod(p.start)} → ${fmtMonthPeriod(p.end)} (${data.assets[BACKTEST_FILTER].years} yr, ${p.n_months} mo)`);
   }
 
   if (rollWindow.values && rollWindow.values.length){
@@ -1692,13 +2462,14 @@ function renderBacktestView(){
     document.getElementById('worstRealValue').textContent = fmtPct(rollWindow.worst.value);
     document.getElementById('worstRealPeriod').innerHTML = `<b>${fmtMonthPeriod(rollWindow.worst.start)} → ${fmtMonthPeriod(rollWindow.worst.date)}</b>`;
     document.getElementById('chartNote').textContent =
-      `${rollWindow.values.length} fenêtres de ${wm} mois glissantes · médiane ${fmtPct(rollWindow.median)} · écart-type ${rollWindow.std.toFixed(1).replace('.',',')} pts`;
+      _t(`${rollWindow.values.length} fenêtres de ${wm} mois glissantes · médiane ${fmtPct(rollWindow.median)} · écart-type ${fmtNum(rollWindow.std,1)} pts`,
+         `${rollWindow.values.length} rolling ${wm}-month windows · median ${fmtPct(rollWindow.median)} · std dev ${fmtNum(rollWindow.std,1)} pts`);
   } else {
     document.getElementById('bestRealValue').textContent = '—';
     document.getElementById('worstRealValue').textContent = '—';
     document.getElementById('bestRealPeriod').textContent = '';
     document.getElementById('worstRealPeriod').textContent = '';
-    document.getElementById('chartNote').textContent = `Historique trop court pour une fenêtre de ${wm} mois.`;
+    document.getElementById('chartNote').textContent = _t(`Historique trop court pour une fenêtre de ${wm} mois.`, `History too short for a ${wm}-month window.`);
   }
 
   const coverageCallout = document.getElementById('coverageCallout');
@@ -1707,11 +2478,15 @@ function renderBacktestView(){
     const allMissing = new Set();
     (data.roll_window.missing||[]).forEach(list=>list.forEach(t=>allMissing.add(t)));
     coverageCallout.style.display = 'block';
-    document.getElementById('coverageCalloutText').innerHTML =
+    document.getElementById('coverageCalloutText').innerHTML = _t(
       `Le backtest est étendu jusqu'en <b>${fmtMonthPeriod(data.backtest_period.start)}</b> même si ${[...allMissing].join(', ')} ` +
       `n'${allMissing.size>1?'ont':'a'} pas encore d'historique à cette date (moins de 25&nbsp;% du portefeuille au total) — ` +
       `ces actifs sont exclus et les autres poids re-normalisés à 100&nbsp;% pour les mois concernés. ` +
-      `Ligne pointillée grise = période de couverture partielle. Couverture complète (tous les actifs) à partir de <b>${fmtMonthPeriod(fcp.start)}</b>.`;
+      `Ligne pointillée grise = période de couverture partielle. Couverture complète (tous les actifs) à partir de <b>${fmtMonthPeriod(fcp.start)}</b>.`,
+      `The backtest is extended back to <b>${fmtMonthPeriod(data.backtest_period.start)}</b> even though ${[...allMissing].join(', ')} ` +
+      `didn't yet have history at that date (collectively under 25&nbsp;% of the portfolio) — ` +
+      `those assets are excluded and the other weights re-normalized to 100&nbsp;% for the months concerned. ` +
+      `Dashed gray line = partial-coverage period. Full coverage (all assets) starting <b>${fmtMonthPeriod(fcp.start)}</b>.`);
   } else {
     coverageCallout.style.display = 'none';
   }
@@ -1720,14 +2495,21 @@ function renderBacktestView(){
   const ari = data.annual_rebalance_info;
   if (isPortfolio && ari){
     annualCallout.style.display = 'block';
-    document.getElementById('annualRebalanceCalloutText').innerHTML =
+    document.getElementById('annualRebalanceCalloutText').innerHTML = _t(
       `${ari.excluded_tickers.join(', ')} pèse${ari.excluded_tickers.length>1?'nt':''} moins de 10&nbsp;% du portefeuille et ` +
       `${ari.excluded_tickers.length>1?'ont':'a'} moins de 5 ans d'historique propre — une position qui doit exister dès le début pour pouvoir ` +
       `dériver puis se rééquilibrer chaque année n'est pas définissable pour elle sur tout l'historique, donc elle est <b>exclue de la ligne ` +
       `Portefeuille en mode annuel</b> et son poids redistribué sur les autres actifs (même règle que pour Monte Carlo) — elle garde ses ` +
       `propres statistiques individuelles partout ailleurs dans le rapport. Résultat : la ligne Portefeuille est testée sur ` +
       `<b>${ari.annual_window_years} ans</b> (${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)}) en annuel, ` +
-      `contre <b>${ari.extended_window_years} ans</b> en mensuel (qui tolère les historiques partiels mois par mois plutôt que d'exclure l'actif).`;
+      `contre <b>${ari.extended_window_years} ans</b> en mensuel (qui tolère les historiques partiels mois par mois plutôt que d'exclure l'actif).`,
+      `${ari.excluded_tickers.join(', ')} weigh${ari.excluded_tickers.length>1?'':'s'} less than 10&nbsp;% of the portfolio and ` +
+      `${ari.excluded_tickers.length>1?'have':'has'} less than 5 years of its own history — a position that must exist from the start to be able to ` +
+      `drift and then rebalance isn't well-defined for it over the whole history, so it's <b>excluded from the ` +
+      `Portfolio line in annual mode</b> and its weight redistributed over the other assets (same rule as for Monte Carlo) — it keeps its ` +
+      `own individual statistics everywhere else in the report. Result: the Portfolio line is tested over ` +
+      `<b>${ari.annual_window_years} yr</b> (${fmtMonthPeriod(data.backtest_period.start)} → ${fmtMonthPeriod(data.backtest_period.end)}) in annual mode, ` +
+      `vs <b>${ari.extended_window_years} yr</b> in monthly mode (which tolerates partial history month by month instead of excluding the asset).`);
   } else {
     annualCallout.style.display = 'none';
   }
@@ -1762,7 +2544,7 @@ function drawLineChart(rollWindow, lineColor){
   let html = '';
   if (fullStart > 0){
     html += `<rect x="${ML}" y="${MT}" width="${(xOf(Math.min(fullStart,n-1))-ML).toFixed(2)}" height="${plotH}" fill="var(--text-muted)" opacity="0.08"/>`;
-    html += `<text class="axis-label" x="${ML+6}" y="${MT+13}" text-anchor="start" style="font-weight:600;">couverture partielle</text>`;
+    html += `<text class="axis-label" x="${ML+6}" y="${MT+13}" text-anchor="start" style="font-weight:600;">${_t('couverture partielle','partial coverage')}</text>`;
   }
   const step = 10;
   for(let gv = Math.ceil(yMin/step)*step; gv<=yMax; gv+=step){
@@ -1824,7 +2606,7 @@ function drawLineChart(rollWindow, lineColor){
     tooltip.style.left = (px-parentRect.left)+'px'; tooltip.style.top = (py-parentRect.top)+'px';
     let tip = `<b>${fmtMonthPeriod(dates[i])}</b> · ${fmtPct(vals[i])}`;
     if (partial[i] && missing[i] && missing[i].length){
-      tip += `<br><span style="opacity:.75">manque : ${missing[i].join(', ')}</span>`;
+      tip += `<br><span style="opacity:.75">${_t('manque','missing')} : ${missing[i].join(', ')}</span>`;
     }
     tooltip.innerHTML = tip;
     tooltip.style.opacity = 1;
@@ -1881,8 +2663,8 @@ function drawAnnualChart(annualReturns){
       const cy = (+rect.getAttribute('y')) / H * rectBounds.height;
       tooltip.style.left = cx+'px'; tooltip.style.top = cy+'px';
       let tip = `<b>${a.year}</b> · ${fmtPct(a.return)}`;
-      if (a.months < 12) tip += ` <span style="opacity:.7">(${a.months} mois)</span>`;
-      if (a.missing && a.missing.length) tip += `<br><span style="opacity:.75">manque : ${a.missing.join(', ')} (couv. ${a.coverage_pct}%)</span>`;
+      if (a.months < 12) tip += ` <span style="opacity:.7">(${a.months} ${_t('mois','mo')})</span>`;
+      if (a.missing && a.missing.length) tip += `<br><span style="opacity:.75">${_t('manque','missing')} : ${a.missing.join(', ')} (${_t('couv.','cov.')} ${a.coverage_pct}%)</span>`;
       tooltip.innerHTML = tip;
       tooltip.style.opacity = 1; rect.setAttribute('opacity','1');
     });
@@ -1903,6 +2685,206 @@ function setupCompositionToggle(){
       document.getElementById('compPieWrap').style.display = COMPOSITION_VIEW==='pie' ? 'flex' : 'none';
     });
   });
+}
+
+function zoneColor(zone){
+  const idx = GEO_ZONES_ORDER.indexOf(zone);
+  return ZONE_COLORS[(idx >= 0 ? idx : GEO_ZONES_ORDER.length) % ZONE_COLORS.length];
+}
+
+const GEO_LABELS_EN = {
+  'Etats-Unis': 'United States', 'Zone euro (diversifie)': 'Eurozone (diversified)', 'France': 'France',
+  'Allemagne': 'Germany', 'Royaume-Uni': 'United Kingdom', 'Italie': 'Italy', 'Espagne': 'Spain',
+  'Suisse': 'Switzerland', 'Pays-Bas': 'Netherlands', 'Europe (autres)': 'Europe (other)',
+  'Japon': 'Japan', 'Chine': 'China', 'Taiwan': 'Taiwan', 'Inde': 'India', 'Coree du Sud': 'South Korea',
+  'Hong Kong': 'Hong Kong', 'Singapour': 'Singapore', 'Asie (autres)': 'Asia (other)', 'Australie': 'Australia',
+  'Nouvelle-Zelande': 'New Zealand', 'Canada': 'Canada', 'Bresil': 'Brazil', 'Mexique': 'Mexico',
+  'Israel': 'Israel', 'Marches emergents (diversifie)': 'Emerging markets (diversified)',
+  'Monde developpe (diversifie)': 'Developed world (diversified)', 'Monde (diversifie)': 'World (diversified)',
+  'Matieres premieres': 'Commodities', 'Fonds a taux fixe': 'Fixed-rate fund', 'Non classe': 'Unclassified',
+  'Amerique du Nord': 'North America', 'Europe': 'Europe', 'Asie-Pacifique': 'Asia-Pacific',
+  'Amerique latine': 'Latin America', 'Moyen-Orient': 'Middle East',
+  'Marches emergents / Monde (non detaille)': 'Emerging markets / World (undetailed)',
+};
+const GEO_LABELS_FR = {
+  'Etats-Unis': 'États-Unis', 'Zone euro (diversifie)': 'Zone euro (diversifiée)',
+  'Taiwan': 'Taïwan', 'Coree du Sud': 'Corée du Sud', 'Nouvelle-Zelande': 'Nouvelle-Zélande',
+  'Bresil': 'Brésil', 'Israel': 'Israël',
+  'Marches emergents (diversifie)': 'Marchés émergents (diversifiés)',
+  'Monde developpe (diversifie)': 'Monde développé (diversifié)',
+  'Monde (diversifie)': 'Monde (diversifié)',
+  'Matieres premieres': 'Matières premières', 'Fonds a taux fixe': 'Fonds à taux fixe',
+  'Non classe': 'Non classé', 'Amerique du Nord': 'Amérique du Nord', 'Amerique latine': 'Amérique latine',
+  'Marches emergents / Monde (non detaille)': 'Marchés émergents / Monde (non détaillé)',
+};
+function trGeo(name){ return LANG === 'en' ? (GEO_LABELS_EN[name] || name) : (GEO_LABELS_FR[name] || name); }
+
+function zoneIconSvg(zone, color){
+  const attrs = `fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"`;
+  const wrap = inner => `<svg viewBox="0 0 24 24" ${attrs}>${inner}</svg>`;
+  if (zone === 'Matieres premieres'){
+    return wrap(`<circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.6" ry="8.5"/>
+      <path d="M3.5 12H20.5"/><path d="M4.6 7.6H19.4"/><path d="M4.6 16.4H19.4"/>`);
+  }
+  if (zone === 'Fonds a taux fixe'){
+    return wrap(`<circle cx="12" cy="12" r="8.5"/><path d="M8.8 15.2 15.2 8.8"/>
+      <circle cx="9.3" cy="9.3" r="1" fill="${color}" stroke="none"/>
+      <circle cx="14.7" cy="14.7" r="1" fill="${color}" stroke="none"/>`);
+  }
+  if (zone === 'Non classe'){
+    return wrap(`<circle cx="12" cy="12" r="8.5"/>
+      <path d="M9.6 9.6c0-1.5 1.1-2.4 2.4-2.4c1.4 0 2.4 0.9 2.4 2.1c0 1.6-2.4 1.9-2.4 3.7"/>
+      <circle cx="12" cy="16.3" r="0.9" fill="${color}" stroke="none"/>`);
+  }
+  // North America / Europe / Asia-Pacific / Latin America / Middle East / Emerging-World:
+  // one consistent "map" glyph, differentiated by the zone's own colour (as everywhere else in the chart)
+  return wrap(`<path d="M3 6.5 8.5 4 15.5 6.5 21 4V17.5L15.5 20 8.5 17.5 3 20Z"/>
+    <path d="M8.5 4V17.5"/><path d="M15.5 6.5V20"/>`);
+}
+
+function renderGeoExposure(data){
+  const tickers = data.used_tickers;
+  // country/region-level totals first (finer detail, used for the drill-down)...
+  const regionTotals = {};
+  tickers.forEach(t=>{
+    const w = data.weights_pct[t];
+    const geo = ETF_GEO[t];
+    if (!geo || !Object.keys(geo).length){
+      regionTotals['Non classe'] = (regionTotals['Non classe'] || 0) + w;
+      return;
+    }
+    Object.keys(geo).forEach(region=>{
+      regionTotals[region] = (regionTotals[region] || 0) + w * (geo[region] / 100);
+    });
+  });
+  // ...then rolled up into mutually-exclusive macro-zones (the primary view:
+  // a country and its containing continent must never both appear as
+  // independent slices, or the chart double-counts and stops summing to 100%).
+  const zoneTotals = {};
+  const zoneRegions = {};
+  Object.keys(regionTotals).forEach(region=>{
+    const zone = GEO_ZONE_OF[region] || 'Non classe';
+    zoneTotals[zone] = (zoneTotals[zone] || 0) + regionTotals[region];
+    (zoneRegions[zone] = zoneRegions[zone] || []).push({region, w: regionTotals[region]});
+  });
+
+  const zones = Object.keys(zoneTotals).sort((a,b)=>{
+    const ia = GEO_ZONES_ORDER.indexOf(a), ib = GEO_ZONES_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  /* headline: at-a-glance diversification read, based only on the TRUE
+     geographic zones (commodities / fixed-rate / unclassified aren't a
+     "region" you can be over-concentrated in) */
+  const geoZones = zones.filter(z=> !NON_GEO_ZONES.includes(z) && zoneTotals[z] > 0);
+  const headline = document.getElementById('geoHeadline');
+  if (!geoZones.length){
+    headline.innerHTML = `<div class="geo-highlight">
+      <div class="geo-highlight-main">
+        <div class="geo-highlight-title">${_t('Exposition géographique par zone principale','Geographic exposure by leading zone')}</div>
+        <div class="geo-highlight-msg">
+          <span class="geo-highlight-icon">${zoneIconSvg('Non classe', 'var(--text-muted)')}</span>
+          <span class="txt">${_t('Non attribuable à une zone géographique','Not attributable to a geographic zone')}</span>
+        </div>
+        <div class="geo-highlight-sub">${_t('Uniquement composé de matières premières, fonds à taux fixe et/ou actifs non classés.','Made up only of commodities, fixed-rate funds and/or unclassified assets.')}</div>
+      </div>
+    </div>`;
+  } else {
+    const dominant = geoZones.reduce((a,b)=> zoneTotals[a] >= zoneTotals[b] ? a : b);
+    const dominantPct = zoneTotals[dominant];
+    const nSignificant = geoZones.filter(z=> zoneTotals[z] >= 5).length;
+    let label, cls;
+    if (dominantPct >= 60){ label = _t('Concentré','Concentrated'); cls = 'bad'; }
+    else if (dominantPct >= 40){ label = _t('Modérément diversifié','Moderately diversified'); cls = 'warn'; }
+    else { label = _t('Bien diversifié','Well diversified'); cls = 'good'; }
+    headline.innerHTML = `<div class="geo-highlight">
+      <div class="geo-highlight-main">
+        <div class="geo-highlight-title">${_t('Exposition géographique par zone principale','Geographic exposure by leading zone')}</div>
+        <div class="geo-highlight-msg">
+          <span class="geo-highlight-icon">${zoneIconSvg(dominant, zoneColor(dominant))}</span>
+          <span class="txt">${_t('La zone la plus exposée est','The most exposed zone is')} ${trGeo(dominant)} — ${dominantPct.toFixed(0)}%</span>
+        </div>
+        <div class="geo-highlight-sub">${_t(`${nSignificant} zone${nSignificant>1?'s':''} géographique${nSignificant>1?'s':''} pesant chacune 5&nbsp;% ou plus du portefeuille`, `${nSignificant} geographic zone${nSignificant>1?'s':''} weighing 5&nbsp;% or more of the portfolio each`)}</div>
+      </div>
+      <span class="geo-quality-pill ${cls}">${label}</span>
+    </div>`;
+  }
+
+  const bar = document.getElementById('geoBar');
+  const legend = document.getElementById('geoLegend');
+  const tooltip = document.getElementById('geoBarTooltip');
+  bar.innerHTML = ''; legend.innerHTML = '';
+  zones.forEach((zone, zi)=>{
+    const w = zoneTotals[zone];
+    if (w <= 0) return;
+    const color = zoneColor(zone);
+    const sortedRegions = zoneRegions[zone].filter(r=>r.w>0).sort((a,b)=>b.w-a.w);
+    const soleRegionMatchesZone = sortedRegions.length === 1 && sortedRegions[0].region === zone;
+    const showToggle = sortedRegions.length > 1 || (sortedRegions.length === 1 && !soleRegionMatchesZone);
+
+    const seg = document.createElement('div');
+    seg.className = 'comp-seg geo-bar-seg'; seg.style.width = w+'%'; seg.style.background = color;
+    bar.appendChild(seg);
+    seg.addEventListener('mousemove', ()=>{
+      const barBounds = bar.getBoundingClientRect();
+      const segBounds = seg.getBoundingClientRect();
+      const cx = segBounds.left - barBounds.left + segBounds.width/2;
+      tooltip.style.left = cx+'px'; tooltip.style.top = '0px';
+      let tip = `<b>${trGeo(zone)}</b> · ${fmtNum(w,1)}%`;
+      if (sortedRegions.length > 1 || (sortedRegions.length === 1 && !soleRegionMatchesZone)){
+        tip += sortedRegions.map(r=>`<br><span style="opacity:.8">${trGeo(r.region)} · ${fmtNum(r.w,1)}%</span>`).join('');
+      }
+      tooltip.innerHTML = tip;
+      tooltip.style.opacity = 1;
+    });
+    seg.addEventListener('mouseleave', ()=>{ tooltip.style.opacity = 0; });
+    seg.dataset.pct = w.toFixed(0);
+
+    const detailId = `geoDetail${zi}`;
+    const cell = document.createElement('div');
+    cell.className = 'geo-cell' + (showToggle ? ' has-detail' : '');
+    cell.innerHTML = `<div class="geo-cell-top">
+        <span class="geo-cell-icon">${zoneIconSvg(zone, color)}</span>
+        ${showToggle ? '<span class="geo-chev">▸</span>' : ''}
+      </div>
+      <div>
+        <div class="geo-cell-name">${trGeo(zone)}</div>
+        <div class="geo-cell-pct">${fmtNum(w,1)} %</div>
+      </div>`;
+    legend.appendChild(cell);
+
+    const detail = document.createElement('div');
+    detail.className = 'geo-zone-detail'; detail.id = detailId;
+    if (showToggle){
+      detail.innerHTML = sortedRegions.map((r,ri)=>`<div class="geo-detail-item">
+          <div class="swatch" style="background:${color}; opacity:${Math.max(0.35, 1 - ri*0.18)}"></div>
+          <span>${trGeo(r.region)}</span><span class="amt">${fmtNum(r.w,1)}%</span>
+        </div>`).join('');
+      legend.appendChild(detail);
+      cell.addEventListener('click', ()=>{
+        cell.classList.toggle('open');
+        detail.classList.toggle('open');
+      });
+    }
+  });
+
+  // deferred to the next frame: at first render #reportArea is still display:none
+  // (made visible right after this function returns), so segments have no real
+  // width yet — measuring now would always read 0 and never show the label
+  requestAnimationFrame(()=>{
+    Array.from(bar.children).forEach(seg=>{
+      if (seg.getBoundingClientRect().width >= 30){
+        seg.innerHTML = `<span class="geo-bar-pct">${seg.dataset.pct}%</span>`;
+      }
+    });
+  });
+
+  const note = document.getElementById('geoNote');
+  note.textContent = _t('Répartition approximative, basée sur l\'allocation type de chaque famille d\'indice (pas les avoirs réels et à jour du fonds). Zones mutuellement exclusives : un pays n\'apparaît que dans sa zone, jamais aussi au niveau "monde".',
+    'Approximate breakdown, based on the typical allocation of each index family (not the fund\'s real, current holdings). Mutually exclusive zones: a country only appears in its own zone, never also at the "world" level.');
 }
 
 function drawCompositionPie(data){
@@ -1992,7 +2974,7 @@ function drawHist(svgId, tooltipId, histData, colorClass, refs){
       const cx = ((+rect.getAttribute('x')) + (+rect.getAttribute('width'))/2) / W * rectBounds.width;
       const cy = (+rect.getAttribute('y')) / H * rectBounds.height;
       tooltip.style.left = cx+'px'; tooltip.style.top = cy+'px';
-      tooltip.innerHTML = `${lo.toFixed(1)}% à ${hi.toFixed(1)}% <b>· ${counts[i]} traj.</b>`;
+      tooltip.innerHTML = `${lo.toFixed(1)}% ${_t('à','to')} ${hi.toFixed(1)}% <b>· ${counts[i]} ${_t('traj.','paths')}</b>`;
       tooltip.style.opacity = 1; rect.setAttribute('opacity','1');
     });
     rect.addEventListener('mouseleave', ()=>{ tooltip.style.opacity=0; rect.setAttribute('opacity','0.85'); });
@@ -2035,7 +3017,7 @@ function drawFanChart(fan){
   const yearStep = n > 24*12 ? 5 : (n > 8*12 ? 2 : 1);
   for(let yr=0; yr*12 < n; yr+=yearStep){
     const i = yr*12;
-    html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">An ${yr}</text>`;
+    html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">${_t('An','Yr')} ${yr}</text>`;
   }
 
   html += `<path d="${bandPath(fan.p5, fan.p95)}" fill="var(--s1-a2)" stroke="none"/>`;
@@ -2060,7 +3042,7 @@ function drawFanChart(fan){
     const py = rect.top - parentRect.top + 20;
     tooltip.style.left = px+'px'; tooltip.style.top = py+'px';
     const yr = (months[i]/12).toFixed(1);
-    tooltip.innerHTML = `<b>Année ${yr}</b> · méd. ${toEUR(fan.median[i]).toFixed(0)}€ · P5 ${toEUR(fan.p5[i]).toFixed(0)}€ · P95 ${toEUR(fan.p95[i]).toFixed(0)}€`;
+    tooltip.innerHTML = `<b>${_t('Année','Year')} ${yr}</b> · ${_t('méd.','med.')} ${toEUR(fan.median[i]).toFixed(0)}€ · P5 ${toEUR(fan.p5[i]).toFixed(0)}€ · P95 ${toEUR(fan.p95[i]).toFixed(0)}€`;
     tooltip.style.opacity = 1;
   }
   function leave(){ crosshair.setAttribute('visibility','hidden'); tooltip.style.opacity=0; }
@@ -2103,10 +3085,10 @@ function setupProjection(){
 }
 
 function fmtEUR(v){
-  return new Intl.NumberFormat('fr-FR', {maximumFractionDigits:0}).format(Math.round(v)) + ' €';
+  return new Intl.NumberFormat(LANG==='en' ? 'en-IE' : 'fr-FR', {maximumFractionDigits:0}).format(Math.round(v)) + ' €';
 }
 function fmtEURShort(v){
-  if (Math.abs(v)>=1000000) return (v/1000000).toFixed(1).replace('.',',')+'M€';
+  if (Math.abs(v)>=1000000) return (LANG==='en' ? (v/1000000).toFixed(1) : (v/1000000).toFixed(1).replace('.',','))+'M€';
   if (Math.abs(v)>=1000) return Math.round(v/1000)+'k€';
   return Math.round(v)+'€';
 }
@@ -2139,10 +3121,10 @@ function runProjection(){
 
   const netAnnualEquivalent = (Math.pow(1+monthlyReturnNet,12)-1)*100;
   document.getElementById('projAssumptionNote').innerHTML =
-    `Hypothèse&nbsp;: <b>${fmtPct(annReturnPct,2)}</b> brut/an` +
-    (taxPct>0 ? `, soit <b>${fmtPct(netAnnualEquivalent,2)}</b> net d'impôt une fois la fiscalité appliquée` : '') +
-    ` · versements indexés à <b>${stepUpPct.toFixed(1).replace('.',',')} %/an</b>` +
-    (Math.abs(stepUpPct-2)<0.01 ? ' (inflation moyenne par défaut)' : '') + '.';
+    _t('Hypothèse','Assumption') + `&nbsp;: <b>${fmtPct(annReturnPct,2)}</b> ${_t('brut/an','gross/yr')}` +
+    (taxPct>0 ? `, ${_t('soit','i.e.')} <b>${fmtPct(netAnnualEquivalent,2)}</b> ${_t("net d'impôt une fois la fiscalité appliquée",'net of tax once taxation is applied')}` : '') +
+    ' · ' + _t('versements indexés à','contributions indexed at') + ` <b>${(LANG==='en'?stepUpPct.toFixed(1):stepUpPct.toFixed(1).replace('.',','))} %/${_t('an','yr')}</b>` +
+    (Math.abs(stepUpPct-2)<0.01 ? ' ' + _t('(inflation moyenne par défaut)','(average inflation, default)') : '') + '.';
 
   const finalNominal = nominal[nominal.length-1];
   const finalReal = real[real.length-1];
@@ -2156,8 +3138,9 @@ function runProjection(){
   gainTile.classList.toggle('good', gain>=0);
   gainTile.classList.toggle('bad', gain<0);
 
-  document.getElementById('projChartNote').textContent =
-    `${years} ans · capital initial ${fmtEUR(initial)} · versement de départ ${fmtEUR(monthlyBase)}/mois`;
+  document.getElementById('projChartNote').textContent = _t(
+    `${years} ans · capital initial ${fmtEUR(initial)} · versement de départ ${fmtEUR(monthlyBase)}/mois`,
+    `${years} yr · initial capital ${fmtEUR(initial)} · starting contribution ${fmtEUR(monthlyBase)}/mo`);
 
   drawProjectionChart(nominal, real, months);
 }
@@ -2183,7 +3166,7 @@ function drawProjectionChart(nominal, real, months){
   const yearStep = months > 40*12 ? 10 : (months > 15*12 ? 5 : (months > 6*12 ? 2 : 1));
   for(let yr=0; yr*12 < n; yr+=yearStep){
     const i = yr*12;
-    html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">An ${yr}</text>`;
+    html += `<text class="axis-label" x="${xOf(i)}" y="${H-8}" text-anchor="middle">${_t('An','Yr')} ${yr}</text>`;
   }
 
   function pathFor(arr){
@@ -2211,7 +3194,7 @@ function drawProjectionChart(nominal, real, months){
     const px = rectBounds.left + (x/W)*rectBounds.width - parentRect.left;
     tooltip.style.left = px+'px'; tooltip.style.top = '16px';
     const yr = (i/12).toFixed(1);
-    tooltip.innerHTML = `<b>Année ${yr}</b> · nominal ${fmtEUR(nominal[i])} · réel ${fmtEUR(real[i])}`;
+    tooltip.innerHTML = `<b>${_t('Année','Year')} ${yr}</b> · ${_t('nominal','nominal')} ${fmtEUR(nominal[i])} · ${_t('réel','real')} ${fmtEUR(real[i])}`;
     tooltip.style.opacity = 1;
   }
   function leave(){ crosshair.setAttribute('visibility','hidden'); tooltip.style.opacity=0; }
@@ -2225,8 +3208,49 @@ function drawProjectionChart(nominal, real, months){
 const AUTH_TOKEN_KEY = 'portfolioSimulator.authToken';
 let AUTH_TOKEN = null;
 let AUTH_EMAIL = null;
-let AUTH_MODE = 'login'; // or 'signup'
+let AUTH_EMAIL_VERIFIED = true; // assume true until /api/auth/me says otherwise, so the banner never flashes on load
+let AUTH_MODE = 'login'; // 'login' | 'signup' | 'forgot' | 'reset'
+let RESET_TOKEN_PENDING = null;
 let SAVED_PORTFOLIOS = [];
+
+const AUTH_MODE_CONFIG = {
+  login: {
+    title: ['Se connecter','Log in'],
+    sub: ['Accédez à vos portefeuilles enregistrés','Access your saved portfolios'],
+    showEmail: true, showPassword: true, showConfirm: false, showForgot: true,
+    passwordLabel: ['Mot de passe','Password'],
+    submit: ['Se connecter','Log in'],
+    switchPrompt: ['Pas encore de compte ?','No account yet?'],
+    switchBtn: ['Créer un compte','Create an account'], switchTo: 'signup',
+  },
+  signup: {
+    title: ['Créer un compte','Create an account'],
+    sub: ['Pour enregistrer vos portefeuilles et les retrouver partout','To save your portfolios and find them anywhere'],
+    showEmail: true, showPassword: true, showConfirm: true, showForgot: false,
+    passwordLabel: ['Mot de passe','Password'],
+    submit: ['Créer mon compte','Create my account'],
+    switchPrompt: ['Déjà un compte ?','Already have an account?'],
+    switchBtn: ['Se connecter','Log in'], switchTo: 'login',
+  },
+  forgot: {
+    title: ['Mot de passe oublié','Forgot password'],
+    sub: ['On vous envoie un lien de réinitialisation par email','We’ll email you a reset link'],
+    showEmail: true, showPassword: false, showConfirm: false, showForgot: false,
+    passwordLabel: ['Mot de passe','Password'],
+    submit: ['Envoyer le lien','Send the link'],
+    switchPrompt: ['',''],
+    switchBtn: ['← Retour à la connexion','← Back to log in'], switchTo: 'login',
+  },
+  reset: {
+    title: ['Nouveau mot de passe','New password'],
+    sub: ['Choisissez un nouveau mot de passe pour votre compte','Choose a new password for your account'],
+    showEmail: false, showPassword: true, showConfirm: true, showForgot: false,
+    passwordLabel: ['Nouveau mot de passe','New password'],
+    submit: ['Réinitialiser le mot de passe','Reset password'],
+    switchPrompt: ['',''],
+    switchBtn: ['← Retour à la connexion','← Back to log in'], switchTo: 'login',
+  },
+};
 
 function loadAuthToken(){
   try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch(e){ return null; }
@@ -2242,19 +3266,34 @@ function authHeaders(){
   return AUTH_TOKEN ? {'Authorization': 'Bearer ' + AUTH_TOKEN} : {};
 }
 
+function showSiteNotice(message, kind){
+  const el = document.getElementById('siteNoticeBanner');
+  el.className = 'banner ' + kind;
+  el.textContent = message;
+  el.style.display = 'block';
+  clearTimeout(showSiteNotice._timer);
+  showSiteNotice._timer = setTimeout(()=>{ el.style.display = 'none'; }, 6000);
+}
+
+function updateEmailVerifyBanner(){
+  document.getElementById('emailVerifyBanner').style.display =
+    (AUTH_TOKEN && AUTH_EMAIL && !AUTH_EMAIL_VERIFIED) ? 'block' : 'none';
+}
+
 function renderAuthBar(){
   const bar = document.getElementById('authBar');
   if (AUTH_TOKEN && AUTH_EMAIL){
-    bar.innerHTML = `<span class="auth-email">${AUTH_EMAIL}</span><button class="auth-link-btn muted" id="logoutBtn" type="button">Déconnexion</button>`;
+    bar.innerHTML = `<span class="auth-email">${AUTH_EMAIL}</span><button class="auth-link-btn muted" id="logoutBtn" type="button">${_t('Déconnexion','Log out')}</button>`;
     document.getElementById('logoutBtn').addEventListener('click', logout);
     document.getElementById('saved-portfolios').style.display = '';
   } else {
-    bar.innerHTML = `<button class="auth-link-btn" id="openLoginBtn" type="button">Se connecter</button>` +
-      `<button class="auth-link-btn" id="openSignupBtn" type="button">Créer un compte</button>`;
+    bar.innerHTML = `<button class="auth-link-btn" id="openLoginBtn" type="button">${_t('Se connecter','Log in')}</button>` +
+      `<button class="auth-link-btn" id="openSignupBtn" type="button">${_t('Créer un compte','Create an account')}</button>`;
     document.getElementById('openLoginBtn').addEventListener('click', ()=> openAuthModal('login'));
     document.getElementById('openSignupBtn').addEventListener('click', ()=> openAuthModal('signup'));
     document.getElementById('saved-portfolios').style.display = 'none';
   }
+  updateEmailVerifyBanner();
 }
 
 async function initAuth(){
@@ -2265,12 +3304,48 @@ async function initAuth(){
       if (!res.ok) throw new Error('invalid session');
       const info = await res.json();
       AUTH_EMAIL = info.email;
+      AUTH_EMAIL_VERIFIED = !!info.email_verified;
       await loadSavedPortfolios();
     } catch(e){
       AUTH_TOKEN = null; AUTH_EMAIL = null; saveAuthToken(null);
     }
   }
   renderAuthBar();
+  await handleAuthLinkParams();
+}
+
+// handles ?verify_token=... and ?reset_token=... links landed on from an email
+async function handleAuthLinkParams(){
+  const params = new URLSearchParams(window.location.search);
+  const verifyToken = params.get('verify_token');
+  const resetToken = params.get('reset_token');
+  if (!verifyToken && !resetToken) return;
+  params.delete('verify_token'); params.delete('reset_token');
+  const qs = params.toString();
+  history.replaceState(null, '', window.location.pathname + (qs ? '?'+qs : ''));
+
+  if (verifyToken){
+    try {
+      const res = await fetch('/api/auth/verify-email', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: verifyToken}),
+      });
+      const info = await res.json();
+      if (!res.ok) throw new Error(info.detail || _t('Lien invalide.','Invalid link.'));
+      if (AUTH_EMAIL && info.email === AUTH_EMAIL) AUTH_EMAIL_VERIFIED = true;
+      updateEmailVerifyBanner();
+      showSiteNotice(_t('Votre email a bien été vérifié.','Your email has been verified.'), 'good');
+    } catch(e){
+      showSiteNotice(_t('Erreur de vérification : ','Verification error: ') + e.message, 'err');
+    }
+  } else if (resetToken){
+    RESET_TOKEN_PENDING = resetToken;
+    openAuthModal('reset');
+  }
+}
+
+function clearAuthMessages(){
+  document.getElementById('authModalError').style.display = 'none';
+  document.getElementById('authModalInfo').style.display = 'none';
 }
 
 function openAuthModal(mode){
@@ -2278,21 +3353,27 @@ function openAuthModal(mode){
   updateAuthModalMode();
   document.getElementById('authEmailInput').value = '';
   document.getElementById('authPasswordInput').value = '';
-  document.getElementById('authModalError').style.display = 'none';
+  document.getElementById('authPasswordConfirmInput').value = '';
+  clearAuthMessages();
   document.getElementById('authModalOverlay').classList.add('open');
-  document.getElementById('authEmailInput').focus();
+  document.getElementById(mode === 'reset' ? 'authPasswordInput' : 'authEmailInput').focus();
 }
 function closeAuthModal(){
   document.getElementById('authModalOverlay').classList.remove('open');
 }
 function updateAuthModalMode(){
-  const isLogin = AUTH_MODE === 'login';
-  document.getElementById('authModalTitle').textContent = isLogin ? 'Se connecter' : 'Créer un compte';
-  document.getElementById('authModalSub').textContent = isLogin
-    ? 'Accédez à vos portefeuilles enregistrés' : 'Pour enregistrer vos portefeuilles et les retrouver partout';
-  document.getElementById('authSubmitBtn').textContent = isLogin ? 'Se connecter' : 'Créer mon compte';
-  document.getElementById('authSwitchPrompt').textContent = isLogin ? 'Pas encore de compte ?' : 'Déjà un compte ?';
-  document.getElementById('authSwitchBtn').textContent = isLogin ? 'Créer un compte' : 'Se connecter';
+  const cfg = AUTH_MODE_CONFIG[AUTH_MODE];
+  document.getElementById('authModalTitle').textContent = _t(...cfg.title);
+  document.getElementById('authModalSub').textContent = _t(...cfg.sub);
+  document.getElementById('authEmailField').style.display = cfg.showEmail ? '' : 'none';
+  document.getElementById('authPasswordField').style.display = cfg.showPassword ? '' : 'none';
+  document.getElementById('authPasswordConfirmField').style.display = cfg.showConfirm ? '' : 'none';
+  document.getElementById('authForgotLinkWrap').style.display = cfg.showForgot ? '' : 'none';
+  document.getElementById('authPasswordLabel').textContent = _t(...cfg.passwordLabel);
+  document.getElementById('authPasswordInput').autocomplete = (AUTH_MODE === 'login') ? 'current-password' : 'new-password';
+  document.getElementById('authSubmitBtn').textContent = _t(...cfg.submit);
+  document.getElementById('authSwitchPrompt').textContent = _t(...cfg.switchPrompt);
+  document.getElementById('authSwitchBtn').textContent = _t(...cfg.switchBtn);
 }
 
 function setupAuthModal(){
@@ -2301,38 +3382,87 @@ function setupAuthModal(){
     if (e.target.id === 'authModalOverlay') closeAuthModal();
   });
   document.getElementById('authSwitchBtn').addEventListener('click', ()=>{
-    AUTH_MODE = AUTH_MODE === 'login' ? 'signup' : 'login';
+    AUTH_MODE = AUTH_MODE_CONFIG[AUTH_MODE].switchTo;
     updateAuthModalMode();
-    document.getElementById('authModalError').style.display = 'none';
+    clearAuthMessages();
+  });
+  document.getElementById('authForgotBtn').addEventListener('click', ()=>{
+    AUTH_MODE = 'forgot';
+    updateAuthModalMode();
+    clearAuthMessages();
   });
   document.getElementById('authSubmitBtn').addEventListener('click', submitAuth);
-  [document.getElementById('authEmailInput'), document.getElementById('authPasswordInput')].forEach(el=>{
+  [document.getElementById('authEmailInput'), document.getElementById('authPasswordInput'), document.getElementById('authPasswordConfirmInput')].forEach(el=>{
     el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') submitAuth(); });
+  });
+  document.getElementById('resendVerificationBtn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('resendVerificationBtn');
+    btn.disabled = true;
+    try {
+      await fetch('/api/auth/resend-verification', {method:'POST', headers: authHeaders()});
+      showSiteNotice(_t('Email de vérification renvoyé.','Verification email resent.'), 'good');
+    } catch(e){
+      showSiteNotice(_t('Échec de l’envoi.','Failed to send.'), 'err');
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
 async function submitAuth(){
+  const cfg = AUTH_MODE_CONFIG[AUTH_MODE];
   const email = document.getElementById('authEmailInput').value.trim();
   const password = document.getElementById('authPasswordInput').value;
+  const passwordConfirm = document.getElementById('authPasswordConfirmInput').value;
   const errEl = document.getElementById('authModalError');
+  const infoEl = document.getElementById('authModalInfo');
   errEl.style.display = 'none';
-  if (!email || !password){
-    errEl.textContent = 'Email et mot de passe requis.';
+  infoEl.style.display = 'none';
+
+  if (cfg.showEmail && !email){
+    errEl.textContent = _t('Email requis.','Email required.');
     errEl.style.display = 'block';
     return;
   }
-  const endpoint = AUTH_MODE === 'login' ? '/api/auth/login' : '/api/auth/signup';
+  if (cfg.showPassword && !password){
+    errEl.textContent = _t('Mot de passe requis.','Password required.');
+    errEl.style.display = 'block';
+    return;
+  }
+  if (cfg.showConfirm && password !== passwordConfirm){
+    errEl.textContent = _t('Les mots de passe ne correspondent pas.','Passwords do not match.');
+    errEl.style.display = 'block';
+    return;
+  }
+
+  let endpoint, body;
+  if (AUTH_MODE === 'login'){ endpoint = '/api/auth/login'; body = {email, password}; }
+  else if (AUTH_MODE === 'signup'){ endpoint = '/api/auth/signup'; body = {email, password}; }
+  else if (AUTH_MODE === 'forgot'){ endpoint = '/api/auth/request-password-reset'; body = {email}; }
+  else { endpoint = '/api/auth/reset-password'; body = {token: RESET_TOKEN_PENDING, password}; }
+
   const btn = document.getElementById('authSubmitBtn');
   btn.disabled = true;
   try {
     const res = await fetch(endpoint, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({email, password}),
+      body: JSON.stringify(body),
     });
     const info = await res.json();
-    if (!res.ok) throw new Error(info.detail || 'Erreur inconnue');
-    AUTH_TOKEN = info.token; AUTH_EMAIL = info.email;
+    if (!res.ok) throw new Error(info.detail || _t('Erreur inconnue','Unknown error'));
+
+    if (AUTH_MODE === 'forgot'){
+      infoEl.textContent = _t(
+        'Si un compte existe avec cet email, un lien de réinitialisation vient d’être envoyé.',
+        'If an account exists for that email, a reset link has just been sent.'
+      );
+      infoEl.style.display = 'block';
+      return;
+    }
+    // login / signup / reset all return {token, email, email_verified}
+    AUTH_TOKEN = info.token; AUTH_EMAIL = info.email; AUTH_EMAIL_VERIFIED = !!info.email_verified;
     saveAuthToken(AUTH_TOKEN);
+    RESET_TOKEN_PENDING = null;
     closeAuthModal();
     renderAuthBar();
     await loadSavedPortfolios();
@@ -2363,7 +3493,7 @@ async function loadSavedPortfolios(){
 
 function renderSavedPortfoliosSelect(){
   const select = document.getElementById('savedPortfoliosSelect');
-  select.innerHTML = '<option value="">— choisir un portefeuille enregistré —</option>' +
+  select.innerHTML = `<option value="">${_t('— choisir un portefeuille enregistré —','— choose a saved portfolio —')}</option>` +
     SAVED_PORTFOLIOS.map(p=> `<option value="${p.id}">${p.name}</option>`).join('');
 }
 
@@ -2379,7 +3509,7 @@ function setupSavedPortfolios(){
     document.getElementById('windowInput').value = saved.window_months;
     document.getElementById('annualRebalanceInput').checked = !!saved.annual_rebalance;
     savePortfolioState();
-    document.getElementById('savedPortfoliosNote').textContent = `« ${saved.name} » chargé.`;
+    document.getElementById('savedPortfoliosNote').textContent = _t(`« ${saved.name} » chargé.`, `"${saved.name}" loaded.`);
     runSimulation();
   });
 
@@ -2391,7 +3521,7 @@ function setupSavedPortfolios(){
     if (res.ok){
       SAVED_PORTFOLIOS = SAVED_PORTFOLIOS.filter(p=>p.id!==id);
       renderSavedPortfoliosSelect();
-      document.getElementById('savedPortfoliosNote').textContent = `« ${saved.name} » supprimé.`;
+      document.getElementById('savedPortfoliosNote').textContent = _t(`« ${saved.name} » supprimé.`, `"${saved.name}" deleted.`);
     }
   });
 
@@ -2406,7 +3536,7 @@ function setupSavedPortfolios(){
   document.getElementById('confirmSaveBtn').addEventListener('click', async ()=>{
     const name = document.getElementById('savePortfolioName').value.trim();
     const note = document.getElementById('savedPortfoliosNote');
-    if (!name){ note.textContent = 'Donnez un nom à ce portefeuille.'; return; }
+    if (!name){ note.textContent = _t('Donnez un nom à ce portefeuille.','Give this portfolio a name.'); return; }
     const portfolio = collectPortfolio();
     const years = parseInt(document.getElementById('yearsInput').value, 10) || 15;
     const window_months = parseInt(document.getElementById('windowInput').value, 10) || 6;
@@ -2418,19 +3548,20 @@ function setupSavedPortfolios(){
         body: JSON.stringify({name, portfolio, years, window_months, annual_rebalance}),
       });
       const info = await res.json();
-      if (!res.ok) throw new Error(info.detail || 'Erreur inconnue');
+      if (!res.ok) throw new Error(info.detail || _t('Erreur inconnue','Unknown error'));
       SAVED_PORTFOLIOS.unshift(info);
       renderSavedPortfoliosSelect();
       document.getElementById('savedPortfoliosSelect').value = info.id;
       document.getElementById('saveInlineForm').classList.remove('open');
       document.getElementById('savePortfolioName').value = '';
-      note.textContent = `« ${name} » enregistré.`;
+      note.textContent = _t(`« ${name} » enregistré.`, `"${name}" saved.`);
     } catch(e){
       note.textContent = e.message;
     }
   });
 }
 
+setupLangAndExport();
 initBuilder();
 setupTabs();
 setupProjection();

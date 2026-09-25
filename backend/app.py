@@ -2,16 +2,36 @@ import json
 import re
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import models
-from auth import create_token, get_current_user, hash_password, verify_password
+from auth import (
+    RESET_TOKEN_TTL,
+    VERIFICATION_TOKEN_TTL,
+    create_token,
+    generate_token,
+    get_current_user,
+    hash_password,
+    utcnow,
+    verify_password,
+)
 from compute import SimulationError, get_etf_stats, optimize_portfolio, resolve_ticker, run_simulation
-from db import Base, engine, get_db
-from etfs import ALL_TICKERS, CATEGORIES, DEFAULT_TER
+from db import Base, engine, get_db, run_lightweight_migrations
+from email_service import send_reset_email, send_verification_email
+from etfs import (
+    ALL_META,
+    ALL_TICKERS,
+    CATEGORIES,
+    DEFAULT_TER,
+    GEO_REGIONS_ORDER,
+    GEO_ZONE_OF,
+    GEO_ZONES_ORDER,
+    METADATA_SCRAPED_AT,
+)
+from pdf_render import render_pdf, start_browser, stop_browser
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -20,8 +40,15 @@ app = FastAPI(title="Portfolio Simulator")
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     Base.metadata.create_all(bind=engine)
+    run_lightweight_migrations()
+    await start_browser()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await stop_browser()
 
 
 class SyntheticSpec(BaseModel):
@@ -48,6 +75,10 @@ class OptimizeRequest(BaseModel):
     max_deviation_pct: float = Field(default=15.0, ge=1, le=100)
 
 
+class RenderPdfRequest(BaseModel):
+    html: str = Field(min_length=1, max_length=5_000_000)
+
+
 class SignupRequest(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=200)
@@ -56,6 +87,19 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+class RequestPasswordResetRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=8, max_length=200)
 
 
 class SavePortfolioRequest(BaseModel):
@@ -68,7 +112,15 @@ class SavePortfolioRequest(BaseModel):
 
 @app.get("/api/etfs")
 def get_etfs():
-    return {"categories": CATEGORIES, "default_ter": DEFAULT_TER}
+    return {
+        "categories": CATEGORIES,
+        "default_ter": DEFAULT_TER,
+        "geo_regions_order": GEO_REGIONS_ORDER,
+        "geo_zones_order": GEO_ZONES_ORDER,
+        "geo_zone_of": GEO_ZONE_OF,
+        "meta": ALL_META,
+        "meta_scraped_at": METADATA_SCRAPED_AT,
+    }
 
 
 @app.get("/api/etf-stats")
@@ -107,6 +159,19 @@ def post_optimize(req: OptimizeRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/api/render-pdf")
+async def api_render_pdf(req: RenderPdfRequest):
+    try:
+        pdf_bytes = await render_pdf(req.html)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {exc}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="rapport-portefeuille.pdf"'},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -119,11 +184,19 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Adresse email invalide.")
     if db.query(models.User).filter(models.User.email == email).first():
         raise HTTPException(status_code=400, detail="Un compte existe déjà avec cet email.")
-    user = models.User(email=email, hashed_password=hash_password(req.password))
+    token = generate_token()
+    user = models.User(
+        email=email,
+        hashed_password=hash_password(req.password),
+        email_verified=False,
+        verification_token=token,
+        verification_token_expires=utcnow() + VERIFICATION_TOKEN_TTL,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"token": create_token(user.id), "email": user.email}
+    send_verification_email(user.email, token)
+    return {"token": create_token(user.id), "email": user.email, "email_verified": False}
 
 
 @app.post("/api/auth/login")
@@ -132,12 +205,73 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect.")
-    return {"token": create_token(user.id), "email": user.email}
+    return {"token": create_token(user.id), "email": user.email, "email_verified": user.email_verified}
 
 
 @app.get("/api/auth/me")
 def me(user: models.User = Depends(get_current_user)):
-    return {"email": user.email}
+    return {"email": user.email, "email_verified": user.email_verified}
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.email_verified:
+        return {"ok": True}
+    token = generate_token()
+    user.verification_token = token
+    user.verification_token_expires = utcnow() + VERIFICATION_TOKEN_TTL
+    db.commit()
+    send_verification_email(user.email, token)
+    return {"ok": True}
+
+
+@app.post("/api/auth/verify-email")
+def verify_email(req: VerifyEmailRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.verification_token == req.token).first()
+    if not user or not user.verification_token_expires:
+        raise HTTPException(status_code=400, detail="Lien de vérification invalide.")
+    expires = user.verification_token_expires
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=utcnow().tzinfo)
+    if expires < utcnow():
+        raise HTTPException(status_code=400, detail="Ce lien de vérification a expiré.")
+    user.email_verified = True
+    user.verification_token = None
+    user.verification_token_expires = None
+    db.commit()
+    return {"ok": True, "email": user.email}
+
+
+@app.post("/api/auth/request-password-reset")
+def request_password_reset(req: RequestPasswordResetRequest, db: Session = Depends(get_db)):
+    email = req.email.strip().lower()
+    user = db.query(models.User).filter(models.User.email == email).first()
+    # always the same response, whether or not the account exists - otherwise
+    # this endpoint would let anyone check which emails are registered
+    if user:
+        token = generate_token()
+        user.reset_token = token
+        user.reset_token_expires = utcnow() + RESET_TOKEN_TTL
+        db.commit()
+        send_reset_email(user.email, token)
+    return {"ok": True}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.reset_token == req.token).first()
+    if not user or not user.reset_token_expires:
+        raise HTTPException(status_code=400, detail="Lien de réinitialisation invalide.")
+    expires = user.reset_token_expires
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=utcnow().tzinfo)
+    if expires < utcnow():
+        raise HTTPException(status_code=400, detail="Ce lien de réinitialisation a expiré.")
+    user.hashed_password = hash_password(req.password)
+    user.reset_token = None
+    user.reset_token_expires = None
+    db.commit()
+    return {"token": create_token(user.id), "email": user.email, "email_verified": user.email_verified}
 
 
 # ---------------------------------------------------------------------------

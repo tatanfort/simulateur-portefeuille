@@ -1,11 +1,11 @@
-"""Password hashing + JWT bearer-token auth. Deliberately minimal: no
-password reset flow, no email verification — just enough for a personal
-tool to gate "save my portfolio" behind an account.
+"""Password hashing + JWT bearer-token auth, plus single-use tokens for
+email verification and password reset (see email_service.py for delivery).
 """
 
 import os
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
@@ -14,6 +14,17 @@ from sqlalchemy.orm import Session
 
 import models
 from db import get_db
+
+VERIFICATION_TOKEN_TTL = timedelta(hours=48)
+RESET_TOKEN_TTL = timedelta(hours=1)
+
+
+def generate_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
