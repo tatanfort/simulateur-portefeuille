@@ -8,5 +8,6 @@ sqlalchemy
 bcrypt
 pyjwt
 psycopg2-binary
+psycopg[binary]
 playwright
 python-dotenv
